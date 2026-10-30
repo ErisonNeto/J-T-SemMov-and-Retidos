@@ -1,0 +1,15 @@
+.env
+.env.*
+!.env.example
+.venv/
+__pycache__/
+*.pyc
+dados/
+detalhes_locais/
+*.tmp
+
+# Credenciais Google: nunca publicar
+*.json
+!planos_exemplo.json
+
+resumos/
