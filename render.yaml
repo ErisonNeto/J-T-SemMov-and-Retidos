@@ -1,0 +1,19 @@
+services:
+  - type: web
+    name: jt-sem-mov-retidos
+    runtime: python
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn app:app --host 0.0.0.0 --port $PORT
+    envVars:
+      - key: JT_TIMEZONE
+        value: America/Belem
+      - key: DATA_SOURCE
+        value: drive
+      - key: GOOGLE_DRIVE_FOLDER_ID
+        sync: false
+      - key: GOOGLE_APPLICATION_CREDENTIALS
+        value: /etc/secrets/google-drive.json
+      - key: DRIVE_CACHE_SECONDS
+        value: '300'
+      - key: DRIVE_HISTORY_DAYS
+        value: '30'
