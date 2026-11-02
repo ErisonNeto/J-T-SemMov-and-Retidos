@@ -13,13 +13,13 @@ O painel lê os resumos CSV da pasta privada do Google Drive. Nenhum banco é ne
 | Nome | Valor |
 |---|---|
 | DATA_SOURCE | drive |
-| GOOGLE_DRIVE_FOLDER_ID | COLE_O_ID_DA_PASTA |
+| GOOGLE_DRIVE_FOLDER_ID | 1pAGIzGgx_gxOPwb6w7J6FBDbH837JAC6 |
 | GOOGLE_APPLICATION_CREDENTIALS | /etc/secrets/google-drive.json |
 | DRIVE_CACHE_SECONDS | 300 |
 | DRIVE_HISTORY_DAYS | 30 |
 | JT_TIMEZONE | America/Belem |
 
-6. Salve e faça o deploy. Mantenha a pasta compartilhada como Leitor com `EMAIL_DA_SUA_CONTA_DE_SERVICO`. Não é necessário torná-la pública.
+6. Salve e faça o deploy. Mantenha a pasta compartilhada como Leitor com `render-indicadores@clever-reserve-513218-u8.iam.gserviceaccount.com`. Não é necessário torná-la pública.
 
 ## Atualizar todos os dias
 
@@ -52,3 +52,42 @@ Mantidos layout, filtros UF/RM/SC/base, metas por indicador, aging, motivos e ra
 A pasta privada protege os arquivos no Drive, mas o pacote não inclui autenticação de visitantes no dashboard. O acesso à URL do painel precisa ser tratado conforme a necessidade da operação. A chave fica somente no servidor e não é entregue ao navegador. Não remova o banco antigo antes de comparar resultados com seus relatórios.
 
 Se o acesso falhar: confira API Google Drive ativada no projeto, JSON correto no Secret File, caminho da variável e compartilhamento da pasta com a conta de serviço.
+
+## Importação de múltiplos arquivos (Retidos)
+
+O `importar_excel.py` aceita os layouts recebidos em outubro/novembro de 2026:
+
+- layout antigo de Retidos (19–25/10), com `Remessa` e 22 colunas;
+- layout novo (27/10 em diante), com `Número da Remessa`, 24/26 colunas e possível aba de pivot/detalhe antes da base bruta;
+- exports com nome genérico `Estatística de itens retidos...YYYYMMDDHHMMSS.xlsx`: a data operacional é inferida pelos horários reais do arquivo, sem confundir com a data de exportação;
+- arquivos `.zip` com vários XLSX podem ser colocados diretamente em `dados/retidos`.
+
+Validação sem enviar ao banco:
+
+```powershell
+python importar_excel.py --dry-run
+```
+
+Importação:
+
+```powershell
+python importar_excel.py
+```
+
+Também é possível passar arquivos/pastas explicitamente:
+
+```powershell
+python importar_excel.py "retidos.zip" "RETIDO DO 27 AO 29.zip" "retido_30.xlsx"
+```
+
+O importador mostra a cobertura de datas e avisa quando existe algum dia sem arquivo.
+
+## Ajuste de compatibilidade - Sem Mov 26/10+
+
+O importador agora localiza a aba bruta de Sem Mov pelo cabeçalho, sem depender da primeira aba ou de letras fixas de coluna. Também reconhece Aging em formatos antigos e novos e continua processando os demais arquivos caso um único arquivo apresente erro (use `--strict` para interromper no primeiro erro).
+
+Validação recomendada:
+
+```powershell
+python importar_excel.py --dry-run
+```

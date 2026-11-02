@@ -8,5 +8,7 @@ if not exist .venv (
   call .venv\Scripts\activate
 )
 python importar_excel.py
-uvicorn app:app --host 0.0.0.0 --port 8004
+if errorlevel 1 goto fim
+python main.py
+:fim
 pause

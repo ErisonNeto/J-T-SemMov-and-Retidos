@@ -7,13 +7,13 @@ services:
     envVars:
       - key: JT_TIMEZONE
         value: America/Belem
-      - key: DATA_SOURCE
-        value: drive
-      - key: GOOGLE_DRIVE_FOLDER_ID
+      - key: JT_API_URL
+        value: https://jt-api.rockettechbr.com.br
+      - key: JT_API_KEY
         sync: false
-      - key: GOOGLE_APPLICATION_CREDENTIALS
-        value: /etc/secrets/google-drive.json
-      - key: DRIVE_CACHE_SECONDS
-        value: '300'
-      - key: DRIVE_HISTORY_DAYS
-        value: '30'
+      - key: JT_API_CACHE_SECONDS
+        value: '120'
+      - key: JT_HISTORY_DAYS
+        value: '45'
+      - key: JT_API_TIMEOUT
+        value: '120'

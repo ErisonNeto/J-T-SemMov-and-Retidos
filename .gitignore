@@ -4,12 +4,9 @@
 .venv/
 __pycache__/
 *.pyc
-dados/
-detalhes_locais/
 *.tmp
 
-# Credenciais Google: nunca publicar
+# Bases operacionais e credenciais não devem ir ao GitHub.
+dados/
 *.json
 !planos_exemplo.json
-
-resumos/
