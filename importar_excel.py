@@ -135,7 +135,12 @@ def data_explicita_do_nome(path: Path) -> Optional[date]:
     esse timestamp é a data de download/exportação e não necessariamente o dia
     operacional do indicador.
     """
-    nome = normalizar(path.stem.replace("_", " "))
+    # Windows pode acrescentar '.xlsx' duas vezes ao renomear arquivos.
+    # Path.stem sozinho deixaria '30.10.xlsx' e esconderia a data lógica.
+    stem = path.stem
+    while stem.lower().endswith(".xlsx"):
+        stem = stem[:-5]
+    nome = normalizar(stem.replace("_", " "))
 
     m = re.search(
         r"(janeiro|fevereiro|marco|abril|maio|junho|julho|agosto|setembro|outubro|novembro|dezembro)"
@@ -146,17 +151,17 @@ def data_explicita_do_nome(path: Path) -> Optional[date]:
         return date(int(m.group(3)), MESES[m.group(1)], int(m.group(2)))
 
     # YYYY-MM-DD / YYYY_MM_DD / YYYY.MM.DD
-    m = re.search(r"(?<!\d)(20\d{2})[-_. ](0?[1-9]|1[0-2])[-_. ]([0-2]?\d|3[01])(?!\d)", path.stem)
+    m = re.search(r"(?<!\d)(20\d{2})[-_. ](0?[1-9]|1[0-2])[-_. ]([0-2]?\d|3[01])(?!\d)", stem)
     if m:
         return date(int(m.group(1)), int(m.group(2)), int(m.group(3)))
 
     # DD-MM-YYYY / DD_MM_YYYY / DD.MM.YYYY
-    m = re.search(r"(?<!\d)([0-2]?\d|3[01])[-_. ](0?[1-9]|1[0-2])[-_. ](20\d{2})(?!\d)", path.stem)
+    m = re.search(r"(?<!\d)([0-2]?\d|3[01])[-_. ](0?[1-9]|1[0-2])[-_. ](20\d{2})(?!\d)", stem)
     if m:
         return date(int(m.group(3)), int(m.group(2)), int(m.group(1)))
 
     # Arquivos operacionais como "retido 27.10.xlsx".
-    m = re.search(r"(?<!\d)([0-2]?\d|3[01])[.-](0?[1-9]|1[0-2])(?![.\d])", path.stem)
+    m = re.search(r"(?<!\d)([0-2]?\d|3[01])[.-](0?[1-9]|1[0-2])(?![.\d])", stem)
     if m:
         hoje = date.today()
         candidato = date(hoje.year, int(m.group(2)), int(m.group(1)))
@@ -315,6 +320,9 @@ def _campo_sem_mov_por_cabecalho(cab: str) -> Optional[str]:
             return campo
 
     # Fallbacks semânticos para pequenas mudanças de nomenclatura.
+    if n in {"data", "data de referencia", "data do relatorio",
+             "data operacional", "data do snapshot", "data da consulta"}:
+        return "data_operacional"
     if "remessa" in n or "waybill" in n:
         return "remessa"
     if "pedido" in n and "data" not in n:
@@ -779,7 +787,8 @@ def inferir_data_sem_mov_coluna_a(path: Path) -> Optional[date]:
     """Lê a data de referência da coluna A quando seu cabeçalho for Data.
 
     Não usa a data de exportação nem a data da última movimentação.
-    Confere TODAS as linhas de dados para evitar misturar dias num mesmo arquivo.
+    Confere o início do arquivo rapidamente e cruza com a data do nome.
+    Na leitura dos registros, também verifica a data linha a linha.
     """
     sheet, linha_cabecalho, _ = localizar_layout_sem_mov(path)
     nomes_confiaveis = {"data", "data de referencia", "data do relatorio",
@@ -803,6 +812,9 @@ def inferir_data_sem_mov_coluna_a(path: Path) -> Optional[date]:
                     if normalizar(valor) not in nomes_confiaveis:
                         return None
                 elif cells:
+                    if total_linhas >= 300:
+                        row.clear()
+                        break
                     if not texto(valor):
                         raise ValueError(
                             f"{path.name}: coluna A (Data) vazia na linha {numero_linha}."
@@ -895,6 +907,15 @@ def detectar_indicador(path: Path) -> str:
 
 def sem_mov_records(path: Path, gestao: Dict[str, dict], data_ref: date) -> Iterator[dict]:
     for r in iter_sem_mov_layout(path):
+        data_linha = texto(r.get("data_operacional"))
+        if data_linha:
+            dt_linha = _excel_ou_texto_para_datetime(data_linha)
+            if dt_linha is None or dt_linha.date() != data_ref:
+                raise ValueError(
+                    f"{path.name}: DATA DIVERGENTE na linha de remessa "
+                    f"{r.get('remessa', '')}: arquivo {data_ref}, "
+                    f"coluna Data {data_linha!r}. Importação interrompida."
+                )
         aging_label = texto(r.get("aging_label"))
         aging = aging_sem_mov(aging_label)
         if aging is None:
@@ -1205,6 +1226,10 @@ def localizar_arquivos(fontes: list[str], gestao_path: Path) -> list[tuple[Path,
             chave = (indicador, data_ref.isoformat(), path.name.lower())
             encontrados[chave] = (path, indicador, data_ref)
         except Exception as exc:
+            if "DATA DIVERGENTE" in str(exc):
+                # Falha antes da primeira carga: jamais importar os demais
+                # arquivos quando há uma data incorreta na pasta.
+                raise ValueError(str(exc)) from exc
             print(f"  IGNORADO: {path.name} | {exc}")
 
     return sorted(encontrados.values(), key=lambda x: (x[2], x[1], x[0].name.lower()))
