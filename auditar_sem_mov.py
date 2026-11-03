@@ -246,38 +246,47 @@ def main():
                               "pedidos:",resumo["pedidos_somados"],"Orlean:",resumo["base_orlean"],
                               resumo["erro"],flush=True)
                         destino.unlink(missing_ok=True)
+    # Este bloco termina fora do contexto do ZIP/TemporaryDirectory.
+    # Indentação normalizada em 4 espaços, sem tabulações.
     cobertura = []
     for dia in DIAS_ESPERADOS:
         chave = dia.isoformat()
         d = diarios.get(chave)
-        arquivos = [x for x in resumos if x["data_confirmada_pelo_nome"] == chave]
+        arquivos = [item for item in resumos if item['data_confirmada_pelo_nome'] == chave]
+        if not arquivos:
+            status = 'SEM ARQUIVO'
+        elif any(item['status'] not in ('PRE-VALIDADO', 'AMOSTRA OK') for item in arquivos):
+            status = 'REVISAR'
+        elif args.amostra:
+            status = 'AMOSTRA'
+        else:
+            status = 'PRE-VALIDADO'
         cobertura.append({
-            "data": chave,
-            "semana": "W43" if dia <= date(2026,10,25) else "W44",
-            "arquivos": len(arquivos),
-            "status": ("SEM ARQUIVO" if not arquivos else
-                       "REVISAR" if any(x["status"] not in ("PRE-VALIDADO", "AMOSTRA OK") for x in arquivos) else
-                       "AMOSTRA" if args.amostra else "PRE-VALIDADO"),
-            "remessas_unicas_dia":len(d["remessas"]) if d else 0,
-            "acima_3_dia":len(d["mais_3"]) if d else 0,
-            "acima_10_dia":len(d["mais_10"]) if d else 0,
-            "orlean_acima_3_dia":len(d["orlean_mais_3"]) if d else 0,
-            "orlean_acima_10_dia":len(d["orlean_mais_10"]) if d else 0,
+            'data': chave,
+            'semana': 'W43' if dia <= date(2026, 10, 25) else 'W44',
+            'arquivos': len(arquivos),
+            'status': status,
+            'remessas_unicas_dia': len(d['remessas']) if d else 0,
+            'acima_3_dia': len(d['mais_3']) if d else 0,
+            'acima_10_dia': len(d['mais_10']) if d else 0,
+            'orlean_acima_3_dia': len(d['orlean_mais_3']) if d else 0,
+            'orlean_acima_10_dia': len(d['orlean_mais_10']) if d else 0,
         })
-    salvar_csv(Path("auditoria_sem_mov.csv"), resumos)
-    salvar_csv(Path("cobertura_sem_mov.csv"), cobertura)
-    print("\n=== COBERTURA (ARQUIVOS RECEBIDOS) ===")
-    for c in cobertura:
-        print(c["semana"],c["data"],c["status"],"arquivos:",c["arquivos"],
-              "Orlean >3:",c["orlean_acima_3_dia"],
-              "Orlean >10:",c["orlean_acima_10_dia"])
-    sem_data=[x["arquivo"] for x in resumos if not x["data_confirmada_pelo_nome"]]
-    if sem_data:
-        print("\nATENÇÃO: estes arquivos precisam ter a data operacional confirmada antes de importar:")
-        for nome in sem_data:print(" -",nome)
-    print("\nRelatórios gerados: auditoria_sem_mov.csv e cobertura_sem_mov.csv")
-    print("Nenhum dado foi enviado ao banco.")
 
+    salvar_csv(Path('auditoria_sem_mov.csv'), resumos)
+    salvar_csv(Path('cobertura_sem_mov.csv'), cobertura)
+    print('\n=== COBERTURA (ARQUIVOS RECEBIDOS) ===')
+    for item in cobertura:
+        print(item['semana'], item['data'], item['status'], 'arquivos:', item['arquivos'],
+              'Orlean >3:', item['orlean_acima_3_dia'],
+              'Orlean >10:', item['orlean_acima_10_dia'])
+    sem_data = [item['arquivo'] for item in resumos if not item['data_confirmada_pelo_nome']]
+    if sem_data:
+        print('\nATENÇÃO: estes arquivos precisam ter a data operacional confirmada antes de importar:')
+        for nome in sem_data:
+            print(' -', nome)
+    print('\nRelatórios gerados: auditoria_sem_mov.csv e cobertura_sem_mov.csv')
+    print('Nenhum dado foi enviado ao banco.')
 
 if __name__ == "__main__":
     main()
