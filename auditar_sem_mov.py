@@ -107,16 +107,16 @@ def processar_planilha(path, nome_origem, data_sugerida, gestao, limite, diarios
                 continue
             resumo["remessas_preenchidas"] += 1
             h = chave_remessa(rem)
-            if h in unicas_arquivo:
+            ja_neste_arquivo = h in unicas_arquivo
+            if ja_neste_arquivo:
                 resumo["repetidas_no_arquivo"] += 1
             unicas_arquivo.add(h)
 
             if data_sugerida:
                 ja = diarios[data_sugerida]["remessas"]
-                if h in ja and not h in diarios[data_sugerida]["neste_arquivo"]:
+                if h in ja and not ja_neste_arquivo:
                     resumo["repetidas_no_dia_entre_arquivos"] += 1
                 ja.add(h)
-                diarios[data_sugerida]["neste_arquivo"].add(h)
 
             ped = core.num_pedidos(registro.get("pedidos"))
             resumo["pedidos_somados"] += ped
@@ -178,7 +178,7 @@ def processar_planilha(path, nome_origem, data_sugerida, gestao, limite, diarios
         elif resumo["aging_desconhecido"]:
             resumo["erro"] = f"{resumo['aging_desconhecido']} linhas com Aging não reconhecido"
         else:
-            resumo["status"] = "PRE-VALIDADO"
+            resumo["status"] = "AMOSTRA OK" if limite else "PRE-VALIDADO"
     except Exception as exc:
         resumo["erro"] = f"{type(exc).__name__}: {str(exc)[:250]}"
     return resumo
@@ -202,7 +202,7 @@ def main():
     gestao = core.carregar_gestao(Path(args.gestao))
     print(f"Gestão carregada: {len(gestao)} códigos | Modo: SOMENTE AUDITORIA", flush=True)
     diarios = defaultdict(lambda: {
-        "remessas": set(), "neste_arquivo": set(),
+        "remessas": set(),
         "mais_3": set(), "mais_10": set(),
         "orlean_mais_3": set(), "orlean_mais_10": set(),
     })
@@ -242,9 +242,7 @@ def main():
                               "pedidos:",resumo["pedidos_somados"],"Orlean:",resumo["base_orlean"],
                               resumo["erro"],flush=True)
                         destino.unlink(missing_ok=True)
-    for dados in diarios.values():
-        dados["neste_arquivo"].clear()
-    cobertura = []
+     cobertura = []
     for dia in DIAS_ESPERADOS:
         chave = dia.isoformat()
         d = diarios.get(chave)
@@ -254,7 +252,8 @@ def main():
             "semana": "W43" if dia <= date(2026,10,25) else "W44",
             "arquivos": len(arquivos),
             "status": ("SEM ARQUIVO" if not arquivos else
-                       "REVISAR" if any(x["status"]!="PRE-VALIDADO" for x in arquivos) else "PRE-VALIDADO"),
+                       "REVISAR" if any(x["status"] not in ("PRE-VALIDADO", "AMOSTRA OK") for x in arquivos) else
+                       "AMOSTRA" if args.amostra else "PRE-VALIDADO"),
             "remessas_unicas_dia":len(d["remessas"]) if d else 0,
             "acima_3_dia":len(d["mais_3"]) if d else 0,
             "acima_10_dia":len(d["mais_10"]) if d else 0,
