@@ -384,6 +384,7 @@ def _layout_sem_mov_posicional_conhecido(path: Path) -> Optional[tuple[str, int,
         sheet = sheets[0]
         validos = 0
         com_codigo = 0
+        com_remessa_e_pedidos = 0
         lidas = 0
         with z.open(sheet) as f:
             context = etree.iterparse(f, events=("end",), tag=NS + "row")
@@ -395,8 +396,11 @@ def _layout_sem_mov_posicional_conhecido(path: Path) -> Optional[tuple[str, int,
                 vals = {}
                 for cell in row.findall(NS + "c"):
                     col = _col(cell.get("r", ""))
-                    if col in {"I", "O"}:
+                    if col in {"B", "C", "I", "O"}:
                         vals[col] = _valor_cell(cell, strings)
+                remessa = texto(vals.get("B", ""))
+                if len(remessa) >= 8 and num_pedidos(vals.get("C", "")) > 0:
+                    com_remessa_e_pedidos += 1
                 if aging_sem_mov(vals.get("O", "")) is not None:
                     validos += 1
                 if norm_codigo(vals.get("I", "")):
@@ -408,7 +412,12 @@ def _layout_sem_mov_posicional_conhecido(path: Path) -> Optional[tuple[str, int,
                 if lidas >= 120:
                     break
 
-        if lidas >= 10 and validos >= max(3, int(lidas * 0.15)) and com_codigo >= max(3, int(lidas * 0.50)):
+        if (
+            lidas >= 10
+            and validos >= max(3, int(lidas * 0.15))
+            and com_codigo >= max(3, int(lidas * 0.50))
+            and com_remessa_e_pedidos >= max(3, int(lidas * 0.15))
+        ):
             return sheet, 1, {
                 "remessa": "B", "pedidos": "C", "base_codigo": "I", "base_nome": "J",
                 "motivo_1": "K", "aging_label": "O", "motivo_2": "T",
