@@ -330,6 +330,41 @@ def _campo_sem_mov_por_cabecalho(cab: str) -> Optional[str]:
     return None
 
 
+
+def _prioridade_coluna_sem_mov(campo: str, cabecalho: str) -> int:
+    """Seleciona a base que está com a remessa, nunca a base remetente.
+
+    No layout novo o código da base remetente precede o código da base mais
+    recente. O primeiro campo correspondente não é necessariamente correto.
+    """
+    n = normalizar(cabecalho)
+    if campo == "base_codigo":
+        if "mais recente" in n and ("codigo" in n or "estacao" in n):
+            return 120
+        if "base de entrega" in n and "codigo" in n:
+            return 100
+        if "remetente" in n or "origem" in n:
+            return 0
+        return 50
+    if campo == "base_nome":
+        if "mais recente" in n:
+            return 120
+        if "base de entrega" in n:
+            return 100
+        if "remetente" in n or "origem" in n:
+            return 0
+        return 50
+    if campo == "aging_label":
+        if n in ("aging", "aging label", "faixa aging"):
+            return 120
+        return 70
+    if campo == "remessa":
+        return 100 if n in ("numero da remessa", "remessa", "waybill no", "waybill no.") else 10
+    if campo == "pedidos":
+        return 100 if n in ("pedidos", "pedido", "quantidade de pedidos") else 10
+    return 50
+
+
 def _achar_coluna_aging_sem_mov(
     z: zipfile.ZipFile,
     sheet: str,
@@ -502,12 +537,16 @@ def localizar_layout_sem_mov(path: Path) -> tuple[str, int, dict[str, str]]:
                         break
 
                     mapa: dict[str, str] = {}
+                    prioridades: dict[str, int] = {}
                     for cell in row.findall(NS + "c"):
                         col = _col(cell.get("r", ""))
                         valor = _valor_cell(cell, strings)
                         campo = _campo_sem_mov_por_cabecalho(valor)
-                        if campo and campo not in mapa:
-                            mapa[campo] = col
+                        if campo:
+                            prioridade = _prioridade_coluna_sem_mov(campo, valor)
+                            if prioridade > prioridades.get(campo, -1):
+                                mapa[campo] = col
+                                prioridades[campo] = prioridade
 
                     base_minima = {"remessa", "pedidos", "base_codigo"}
                     if base_minima.issubset(mapa):
