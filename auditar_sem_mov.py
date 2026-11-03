@@ -19,7 +19,7 @@ import sys
 import tempfile
 import zipfile
 from collections import defaultdict
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 from pathlib import Path
 
 import importar_excel as core
@@ -72,9 +72,84 @@ def encontrar_origem(entradas):
             yield x
 
 
+def _data_em_celula(valor):
+    """Converte data Excel (serial) ou texto; nunca interpreta código de remessa como data."""
+    v = str(valor or "").strip()
+    if not v:
+        return None
+    try:
+        numero = float(v)
+        if 30000 <= numero <= 80000:
+            d = core.from_excel(numero)
+            return d.date() if isinstance(d, datetime) else d
+    except (TypeError, ValueError, OverflowError):
+        pass
+    for formato in ("%d/%m/%Y", "%Y-%m-%d", "%d-%m-%Y",
+                    "%d/%m/%Y %H:%M:%S", "%Y-%m-%d %H:%M:%S",
+                    "%d/%m/%Y %H:%M", "%Y-%m-%d %H:%M"):
+        try:
+            return datetime.strptime(v, formato).date()
+        except ValueError:
+            pass
+    return None
+
+
+def inspecionar_coluna_a(path, aba, linha_cabecalho, limite=250):
+    """Inspeciona A na aba de dados: mostra datas, sem confundir última operação com snapshot."""
+    exemplos = []
+    datas = set()
+    cabecalho = ""
+    lidas = 0
+    with zipfile.ZipFile(path) as z:
+        strings = core._shared_strings(z)
+        with z.open(aba) as f:
+            for _, row in core.etree.iterparse(f, events=("end",), tag=core.NS + "row"):
+                numero_linha = int(row.get("r") or 0)
+                if numero_linha > linha_cabecalho + limite:
+                    row.clear()
+                    break
+                celula_a = None
+                for c in row.findall(core.NS + "c"):
+                    if core._col(c.get("r", "")) == "A":
+                        celula_a = c
+                        break
+                valor = core._valor_cell(celula_a, strings) if celula_a is not None else ""
+                if numero_linha == linha_cabecalho:
+                    cabecalho = str(valor).strip()
+                elif numero_linha > linha_cabecalho:
+                    lidas += 1
+                    if valor and len(exemplos) < 5 and str(valor) not in exemplos:
+                        exemplos.append(str(valor)[:70])
+                    d = _data_em_celula(valor)
+                    if d and 2020 <= d.year <= 2035:
+                        datas.add(d.isoformat())
+                row.clear()
+                while row.getprevious() is not None:
+                    del row.getparent()[0]
+    titulo = core.normalizar(cabecalho)
+    # Só estas nomenclaturas identificam de forma inequívoca a data do snapshot.
+    confiavel = (
+        ("referencia" in titulo or "relatorio" in titulo or "consulta" in titulo or
+         "fotografia" in titulo or "snapshot" in titulo)
+        and ("data" in titulo or "dia" in titulo)
+        and "ultima" not in titulo and "moviment" not in titulo
+    )
+    data_segura = next(iter(datas)) if confiavel and len(datas) == 1 and lidas else ""
+    return {
+        "cabecalho": cabecalho,
+        "amostras": " | ".join(exemplos),
+        "datas": sorted(datas),
+        "data_segura": data_segura,
+        "lidas": lidas,
+    }
+
+
 def processar_planilha(path, nome_origem, data_sugerida, gestao, limite, diarios):
     resumo = {
         "arquivo": nome_origem, "data_confirmada_pelo_nome": data_sugerida,
+        "data_operacional_auditada": data_sugerida, "origem_data": "nome" if data_sugerida else "indefinida",
+        "coluna_a_cabecalho": "", "coluna_a_exemplos": "",
+        "coluna_a_datas_encontradas": "", "coluna_a_data_confiavel": "",
         "aba": "", "mapa_colunas": "", "status": "REVISAR", "erro": "",
         "linhas_lidas": 0, "remessas_preenchidas": 0, "remessas_unicas_arquivo": 0,
         "repetidas_no_arquivo": 0, "repetidas_no_dia_entre_arquivos": 0,
@@ -93,6 +168,15 @@ def processar_planilha(path, nome_origem, data_sugerida, gestao, limite, diarios
     cod_exemplos = []
     try:
         aba, cab_linha, mapa = core.localizar_layout_sem_mov(path)
+        info_a = inspecionar_coluna_a(path, aba, cab_linha)
+        resumo["coluna_a_cabecalho"] = info_a["cabecalho"]
+        resumo["coluna_a_exemplos"] = info_a["amostras"]
+        resumo["coluna_a_datas_encontradas"] = " | ".join(info_a["datas"][:12])
+        resumo["coluna_a_data_confiavel"] = info_a["data_segura"]
+        if not data_sugerida and info_a["data_segura"]:
+            data_sugerida = info_a["data_segura"]
+            resumo["origem_data"] = "coluna A (referencia unica)"
+        resumo["data_operacional_auditada"] = data_sugerida
         resumo["aba"] = aba
         resumo["mapa_colunas"] = " / ".join(f"{k}:{v}" for k,v in sorted(mapa.items()))
         obrigatorios = {"remessa", "base_codigo", "aging_label", "pedidos"}
@@ -218,7 +302,10 @@ def main():
                 dia = data_do_nome(fonte.name)
                 r = processar_planilha(fonte, str(fonte), dia, gestao, args.amostra, diarios)
                 resumos.append(r)
-                print("  ",r["status"],"dia:",dia or "NÃO COMPROVADO",
+                print("  ",r["status"],"dia:",r["data_operacional_auditada"] or "NÃO COMPROVADO",
+                      "| Coluna A:",r["coluna_a_cabecalho"] or "SEM CABEÇALHO",
+                      "| Datas em A:",r["coluna_a_datas_encontradas"][:90] or "NENHUMA",
+                      "| Amostras A:",r["coluna_a_exemplos"][:110] or "VAZIA",
                       "remessas:",r["remessas_unicas_arquivo"],
                       "pedidos:",r["pedidos_somados"],"Orlean:",r["base_orlean"],r["erro"],flush=True)
             elif fonte.suffix.lower() == ".zip":
@@ -242,7 +329,10 @@ def main():
                         resumo = processar_planilha(destino, f"{fonte.name} :: {entrada.filename}",
                                                      dia, gestao,args.amostra, diarios)
                         resumos.append(resumo)
-                        print("    ",resumo["status"],"remessas:",resumo["remessas_unicas_arquivo"],
+                        print("    ",resumo["status"],"dia:",resumo["data_operacional_auditada"] or "NÃO COMPROVADO",
+                              "| Coluna A:",resumo["coluna_a_cabecalho"] or "SEM CABEÇALHO",
+                              "| Datas em A:",resumo["coluna_a_datas_encontradas"][:90] or "NENHUMA",
+                              "remessas:",resumo["remessas_unicas_arquivo"],
                               "pedidos:",resumo["pedidos_somados"],"Orlean:",resumo["base_orlean"],
                               resumo["erro"],flush=True)
                         destino.unlink(missing_ok=True)
@@ -252,7 +342,7 @@ def main():
     for dia in DIAS_ESPERADOS:
         chave = dia.isoformat()
         d = diarios.get(chave)
-        arquivos = [item for item in resumos if item['data_confirmada_pelo_nome'] == chave]
+        arquivos = [item for item in resumos if item["data_operacional_auditada"] == chave]
         if not arquivos:
             status = 'SEM ARQUIVO'
         elif any(item['status'] not in ('PRE-VALIDADO', 'AMOSTRA OK') for item in arquivos):
@@ -280,7 +370,7 @@ def main():
         print(item['semana'], item['data'], item['status'], 'arquivos:', item['arquivos'],
               'Orlean >3:', item['orlean_acima_3_dia'],
               'Orlean >10:', item['orlean_acima_10_dia'])
-    sem_data = [item['arquivo'] for item in resumos if not item['data_confirmada_pelo_nome']]
+    sem_data = [item['arquivo'] for item in resumos if not item["data_operacional_auditada"]]
     if sem_data:
         print('\nATENÇÃO: estes arquivos precisam ter a data operacional confirmada antes de importar:')
         for nome in sem_data:
