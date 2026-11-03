@@ -48,8 +48,8 @@ def _headers() -> dict[str, str]:
     return headers
 
 
-def _extrair_linhas(payload: Any) -> list[dict]:
-    """Aceita os formatos de resposta já usados pela API e mantém compatibilidade."""
+def _extrair_linhas(payload: Any) -> list:
+    """Extrai as linhas da resposta da JT API, inclusive quando vêm posicionais."""
     if isinstance(payload, list):
         return payload
     if not isinstance(payload, dict):
@@ -60,15 +60,34 @@ def _extrair_linhas(payload: Any) -> list[dict]:
         if isinstance(valor, list):
             return valor
 
-    # Algumas versões retornam um objeto único em "data".
     if isinstance(payload.get("data"), dict):
-        data = payload["data"]
-        for chave in ("rows", "registros", "resultado", "items"):
-            valor = data.get(chave)
-            if isinstance(valor, list):
-                return valor
+        return _extrair_linhas(payload["data"])
 
     raise ValueError("A JT API respondeu, mas não retornou uma lista de linhas reconhecível.")
+
+
+def _dataframe_da_resposta(payload: Any) -> pd.DataFrame:
+    rows = _extrair_linhas(payload)
+    if not rows:
+        return pd.DataFrame(columns=COLUNAS)
+
+    primeira = rows[0]
+    if isinstance(primeira, dict):
+        df = pd.DataFrame(rows)
+    else:
+        if not isinstance(primeira, (list, tuple)):
+            raise ValueError("Formato de linha inesperado na resposta da JT API.")
+        if len(primeira) != len(COLUNAS):
+            raise ValueError(
+                f"JT API retornou {len(primeira)} colunas por linha; "
+                f"o dashboard espera {len(COLUNAS)}."
+            )
+        df = pd.DataFrame(rows, columns=COLUNAS)
+
+    faltantes = set(COLUNAS) - set(df.columns)
+    if faltantes:
+        raise ValueError(f"Consulta da JT API sem colunas esperadas: {sorted(faltantes)}")
+    return df[COLUNAS].copy()
 
 
 def _consultar_resumo() -> pd.DataFrame:
@@ -103,26 +122,29 @@ def _consultar_resumo() -> pd.DataFrame:
         json={"sql": sql, "params": [inicio]},
         timeout=_TIMEOUT,
     )
-    resp.raise_for_status()
-    rows = _extrair_linhas(resp.json())
-    if not rows:
-        return pd.DataFrame(columns=COLUNAS)
+    if not resp.ok:
+        raise RuntimeError(
+            f"JT API /query retornou HTTP {resp.status_code}: {resp.text[:500]}"
+        )
 
-    df = pd.DataFrame(rows)
-    faltantes = set(COLUNAS) - set(df.columns)
-    if faltantes:
-        raise ValueError(f"Consulta da JT API sem colunas esperadas: {sorted(faltantes)}")
+    df = _dataframe_da_resposta(resp.json())
+    if df.empty:
+        return df
 
-    df = df[COLUNAS].copy()
-    for col in ("indicador", "data", "base_codigo", "base_nome", "uf", "rm", "sc", "regional", "aging_label", "motivo"):
+    for col in (
+        "indicador", "data", "base_codigo", "base_nome", "uf", "rm", "sc",
+        "regional", "aging_label", "motivo",
+    ):
         df[col] = df[col].fillna("").astype(str).str.strip()
+
     for col in ("aging_valor", "acima_3", "acima_10", "pedidos", "linhas"):
         df[col] = pd.to_numeric(df[col], errors="coerce").fillna(0).astype("int64")
+
     return df
 
 
 def carregar() -> pd.DataFrame:
-    """Carrega um snapshot agregado com cache curto para não repetir a mesma query por endpoint."""
+    """Carrega um snapshot agregado com cache curto para não repetir a query por endpoint."""
     global _cache_df, _cache_until
     agora = time.monotonic()
     if _cache_df is not None and agora < _cache_until:
@@ -142,7 +164,10 @@ def carregar() -> pd.DataFrame:
             if _cache_df is None:
                 raise
             _cache_until = time.monotonic() + min(30, _CACHE_SECONDS)
-            _status["aviso"] = f"Falha ao atualizar a JT API; mantendo o último snapshot válido. {exc}"
+            _status["aviso"] = (
+                "Falha ao atualizar a JT API; mantendo o último snapshot válido. "
+                f"{exc}"
+            )
         return _cache_df.copy()
 
 
