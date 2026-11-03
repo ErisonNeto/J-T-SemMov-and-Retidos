@@ -227,8 +227,6 @@ def dashboard(
     for b in bases:
         prev = quantidades(anterior_df[anterior_df.base_codigo == b['base_codigo']])['acima_3'] if anterior_completo else None
         b['variacao'] = variacao(b['acima_3'], prev) if atual_completo else None
-        mot = motivos(periodo_df[periodo_df.base_codigo == b['base_codigo']])
-        b['motivo'] = mot[0]['motivo'] if mot else ''
 
     return {
         'indicador': indicador,
@@ -250,7 +248,7 @@ def dashboard(
         'aging': aging_distribuicao(final_df),
         'top_bases': bases,
         'top_sc': ranking(periodo_df[periodo_df.sc != ''], ['sc'], 20),
-        'motivos': motivos(periodo_df),
+        'motivos': [],
         'ultima_carga': disponiveis[-1] if disponiveis else None,
         'fonte': status_fonte(),
     }
