@@ -23,4 +23,4 @@ $$('.tab').forEach(t=>t.onclick=()=>switchTab(t.dataset.indicador));
 ['#fDataInicial','#fDataFinal','#fUf','#fSc','#fBase'].forEach(s=>$(s).onchange=()=>loadDashboard());
 $('#btnClear').onclick=()=>{['#fUf','#fSc','#fBase'].forEach(s=>$(s).value='');loadDashboard()};
 $('#downloadBtn').onclick=()=>{const p=new URLSearchParams({indicador:state.indicador,data_inicial:$('#fDataInicial').value,data_final:$('#fDataFinal').value,corte:'3',uf:$('#fUf').value,sc:$('#fSc').value,base:$('#fBase').value});window.location='/api/download?'+p};
-switchTab('sem_mov');
+switchTab(new URLSearchParams(window.location.search).get('indicador') === 'retidos' ? 'retidos' : 'sem_mov');
