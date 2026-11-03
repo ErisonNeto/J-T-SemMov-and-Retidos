@@ -2,16 +2,13 @@ from __future__ import annotations
 
 """Executor automático do importador Sem Mov / Retidos.
 
-Mantém toda a lógica do importar_excel.py, mas elimina a necessidade de renomear
-exports automáticos do Sem Mov. Para nomes J&T que terminam com timestamp de
-exportação (ex.: ...20261103084820.xlsx), considera como referência operacional
-o dia anterior ao timestamp da exportação. Ao final de uma importação real,
+Mantém a lógica de importar_excel.py. Para arquivos Sem Mov com nome genérico,
+lê a coluna A quando for Data de referência e valida todas as linhas.
+NUNCA infere a data pelo horário do download. Após a importação,
 consulta a JT API e imprime as datas efetivamente presentes no PostgreSQL.
 """
 
-import re
 import sys
-from datetime import datetime, timedelta
 from pathlib import Path
 
 import requests
@@ -19,20 +16,8 @@ import requests
 import importar_excel as core
 
 
-def _timestamp_exportacao(path: Path) -> datetime | None:
-    """Encontra um timestamp YYYYMMDDHHMMSS válido mesmo dentro de uma sequência maior."""
-    nome = path.stem
-    candidatos: list[datetime] = []
-    for match in re.finditer(r"(?=(20\d{12}))", nome):
-        valor = match.group(1)
-        try:
-            candidatos.append(datetime.strptime(valor, "%Y%m%d%H%M%S"))
-        except ValueError:
-            continue
-    return max(candidatos) if candidatos else None
-
-
 def data_referencia_auto(path: Path, indicador: str):
+    """Prioriza a data real da coluna A; nunca usa o timestamp do download."""
     explicita = core.data_explicita_do_nome(path)
     if explicita is not None:
         return explicita
@@ -41,27 +26,13 @@ def data_referencia_auto(path: Path, indicador: str):
         return core.inferir_data_retidos(path)
 
     if indicador == "sem_mov":
-        exportado_em = _timestamp_exportacao(path)
-        if exportado_em is not None:
-            operacional = exportado_em.date() - timedelta(days=1)
-            print(
-                f"    Sem Mov: data automática {operacional} "
-                f"(exportado em {exportado_em:%d/%m/%Y %H:%M:%S}) | {path.name}"
-            )
-            return operacional
-
-        # Último fallback somente para o nome padrão do relatório da J&T.
-        # Evita exigir renomeação caso o fornecedor altere/remova o timestamp.
-        nome = core.normalizar(path.stem)
-        if "monitoramento de movimentacao" in nome:
-            operacional = datetime.fromtimestamp(path.stat().st_mtime).date() - timedelta(days=1)
-            print(
-                f"    Sem Mov: data automática {operacional} pela data do arquivo | {path.name}"
-            )
-            return operacional
+        dia = core.inferir_data_sem_mov_coluna_a(path)
+        if dia is not None:
+            return dia
 
     raise ValueError(
-        f"Não consegui inferir automaticamente a data operacional de {path.name}."
+        f"{path.name}: data operacional não identificada de forma confiável. "
+        "É preciso um cabeçalho Data válido na coluna A ou uma data no nome."
     )
 
 
