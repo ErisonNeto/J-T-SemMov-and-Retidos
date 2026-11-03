@@ -51,10 +51,10 @@ def main():
             SELECT data::text AS data,
                    COUNT(*)::bigint AS registros,
                    SUM(COALESCE(pedidos,0))::bigint AS pedidos,
-                   SUM(CASE WHEN UPPER(COALESCE(rm,'')) LIKE '%ORLEAN%' THEN 1 ELSE 0 END)::bigint AS linhas_orlean,
-                   SUM(CASE WHEN UPPER(COALESCE(rm,'')) LIKE '%ORLEAN%' AND COALESCE(aging_valor,0)>3
+                   SUM(CASE WHEN POSITION('ORLEAN' IN UPPER(COALESCE(rm,''))) > 0 THEN 1 ELSE 0 END)::bigint AS linhas_orlean,
+                   SUM(CASE WHEN POSITION('ORLEAN' IN UPPER(COALESCE(rm,''))) > 0 AND COALESCE(aging_valor,0)>3
                        THEN COALESCE(pedidos,0) ELSE 0 END)::bigint AS orlean_acima_3,
-                   SUM(CASE WHEN UPPER(COALESCE(rm,'')) LIKE '%ORLEAN%' AND COALESCE(aging_valor,0)>10
+                   SUM(CASE WHEN POSITION('ORLEAN' IN UPPER(COALESCE(rm,''))) > 0 AND COALESCE(aging_valor,0)>10
                        THEN COALESCE(pedidos,0) ELSE 0 END)::bigint AS orlean_acima_10
             FROM public.sem_mov_retidos_detalhe
             WHERE indicador = 'sem_mov'
