@@ -92,7 +92,7 @@ def resolver_periodo(raw, indicador, data_inicial='', data_final=''):
 
     try:
         fim = date.fromisoformat(data_final) if data_final else maior
-        inicio = date.fromisoformat(data_inicial) if data_inicial else max(menor, fim - timedelta(days=13))
+        inicio = date.fromisoformat(data_inicial) if data_inicial else max(menor, fim - timedelta(days=6))
     except ValueError as exc:
         raise HTTPException(status_code=400, detail='Data inválida. Use AAAA-MM-DD.') from exc
 
@@ -102,6 +102,17 @@ def resolver_periodo(raw, indicador, data_inicial='', data_final=''):
         raise HTTPException(status_code=404, detail='O período selecionado não possui dados carregados.')
 
     return inicio, fim, disponiveis
+
+
+def datas_entre(inicio, fim):
+    dias = (fim - inicio).days + 1
+    return [(inicio + timedelta(days=i)).isoformat() for i in range(dias)]
+
+
+def rotulo_semana(inicio, fim):
+    if (fim - inicio).days == 6 and inicio.weekday() == 0 and fim.weekday() == 6:
+        return f"W{inicio.isocalendar().week:02d}"
+    return None
 
 
 def aging_distribuicao(df):
@@ -159,8 +170,7 @@ def dashboard(
     if inicio_data is None or fim_data is None:
         return {
             'indicador': indicador,
-            'periodo': {'inicio': None, 'fim': None},
-            'datas': {'atual': None, 'anterior': None, 'tem_atual': False, 'tem_anterior': False},
+            'periodo': {'inicio': None, 'fim': None, 'atual_completo': False, 'anterior_completo': False},
             'metrics': {
                 'acima_3': {'atual': None, 'anterior': None, 'variacao': None, 'meta': METAS[indicador]['acima_3'], 'dentro_meta': None},
                 'acima_10': {'atual': None, 'anterior': None, 'variacao': None, 'meta': METAS[indicador]['acima_10'], 'dentro_meta': None},
@@ -169,62 +179,78 @@ def dashboard(
             'ultima_carga': None, 'fonte': status_fonte(),
         }
 
+    dias_periodo = (fim_data - inicio_data).days + 1
+    anterior_fim = inicio_data - timedelta(days=1)
+    anterior_inicio = anterior_fim - timedelta(days=dias_periodo - 1)
+
+    inicio_iso = inicio_data.isoformat()
     fim_iso = fim_data.isoformat()
-    anterior_data = fim_data - timedelta(days=7)
-    anterior_iso = anterior_data.isoformat()
-    tem_atual = fim_iso in set(disponiveis)
-    tem_anterior = anterior_iso in set(disponiveis)
+    anterior_inicio_iso = anterior_inicio.isoformat()
+    anterior_fim_iso = anterior_fim.isoformat()
+
+    disponiveis_set = set(disponiveis)
+    esperadas_atual = datas_entre(inicio_data, fim_data)
+    esperadas_anterior = datas_entre(anterior_inicio, anterior_fim)
+    faltantes_atual = [d for d in esperadas_atual if d not in disponiveis_set]
+    faltantes_anterior = [d for d in esperadas_anterior if d not in disponiveis_set]
+    atual_completo = not faltantes_atual
+    anterior_completo = not faltantes_anterior
 
     df = filtrar(raw, indicador, uf, sc, base)
-    atual = df[df.data == fim_iso]
-    anterior = df[df.data == anterior_iso]
+    periodo_df = df[(df.data >= inicio_iso) & (df.data <= fim_iso)]
+    anterior_df = df[(df.data >= anterior_inicio_iso) & (df.data <= anterior_fim_iso)]
+    final_df = df[df.data == fim_iso]
 
-    q_atual = quantidades(atual)
-    q_anterior = quantidades(anterior)
+    q_atual = quantidades(periodo_df)
+    q_anterior = quantidades(anterior_df)
 
     metrics = {}
     for c in ('3', '10'):
         key = f'acima_{c}'
-        a = q_atual[key] if tem_atual else None
-        p = q_anterior[key] if tem_anterior else None
+        a = q_atual[key]
+        p = q_anterior[key]
         meta = METAS[indicador][key]
         metrics[key] = {
             'atual': a,
             'anterior': p,
-            'variacao': variacao(a, p),
+            'variacao': variacao(a, p) if (atual_completo and anterior_completo) else None,
             'meta': meta,
             'dentro_meta': a <= meta if (a is not None and meta is not None) else None,
         }
 
-    inicio_iso = inicio_data.isoformat()
-    periodo_df = df[(df.data >= inicio_iso) & (df.data <= fim_iso)]
     evo = [
         {'data': dt, **quantidades(g)}
         for dt, g in periodo_df.groupby('data', sort=True)
     ]
 
-    bases = ranking(atual, ['base_codigo', 'base_nome', 'sc'], 20)
+    bases = ranking(periodo_df, ['base_codigo', 'base_nome', 'sc'], 20)
     for b in bases:
-        prev = quantidades(anterior[anterior.base_codigo == b['base_codigo']])['acima_3'] if tem_anterior else None
-        b['variacao'] = variacao(b['acima_3'], prev)
-        mot = motivos(atual[atual.base_codigo == b['base_codigo']])
+        prev = quantidades(anterior_df[anterior_df.base_codigo == b['base_codigo']])['acima_3'] if anterior_completo else None
+        b['variacao'] = variacao(b['acima_3'], prev) if atual_completo else None
+        mot = motivos(periodo_df[periodo_df.base_codigo == b['base_codigo']])
         b['motivo'] = mot[0]['motivo'] if mot else ''
 
     return {
         'indicador': indicador,
-        'periodo': {'inicio': inicio_iso, 'fim': fim_iso},
-        'datas': {
-            'atual': fim_iso,
-            'anterior': anterior_iso,
-            'tem_atual': tem_atual,
-            'tem_anterior': tem_anterior,
+        'periodo': {
+            'inicio': inicio_iso,
+            'fim': fim_iso,
+            'anterior_inicio': anterior_inicio_iso,
+            'anterior_fim': anterior_fim_iso,
+            'dias': dias_periodo,
+            'semana_atual': rotulo_semana(inicio_data, fim_data),
+            'semana_anterior': rotulo_semana(anterior_inicio, anterior_fim),
+            'atual_completo': atual_completo,
+            'anterior_completo': anterior_completo,
+            'faltantes_atual': faltantes_atual,
+            'faltantes_anterior': faltantes_anterior,
         },
         'metrics': metrics,
         'evolucao': evo,
-        'aging': aging_distribuicao(atual),
+        'aging': aging_distribuicao(final_df),
         'top_bases': bases,
-        'top_sc': ranking(atual[atual.sc != ''], ['sc'], 20),
-        'motivos': motivos(atual),
+        'top_sc': ranking(periodo_df[periodo_df.sc != ''], ['sc'], 20),
+        'motivos': motivos(periodo_df),
         'ultima_carga': disponiveis[-1] if disponiveis else None,
         'fonte': status_fonte(),
     }
@@ -233,18 +259,20 @@ def dashboard(
 @app.get('/api/download')
 def download(
     indicador: str = Query(pattern='^(sem_mov|retidos)$'),
+    data_inicial: str = '',
     data_final: str = '',
     corte: str = Query(default='3', pattern='^(3|10)$'),
     uf: str = '', sc: str = '', base: str = '',
 ):
     raw = carregar()
-    _, fim_data, _ = resolver_periodo(raw, indicador, '', data_final)
-    if fim_data is None:
+    inicio_data, fim_data, _ = resolver_periodo(raw, indicador, data_inicial, data_final)
+    if inicio_data is None or fim_data is None:
         raise HTTPException(status_code=404, detail='Não há dados carregados para este indicador.')
 
+    inicio_iso = inicio_data.isoformat()
     fim_iso = fim_data.isoformat()
     df = filtrar(raw, indicador, uf, sc, base)
-    df = df[df.data == fim_iso]
+    df = df[(df.data >= inicio_iso) & (df.data <= fim_iso)]
     limite = 3 if corte == '3' else 10
     df = df[df.aging_valor > limite]
 
@@ -266,5 +294,5 @@ def download(
     return StreamingResponse(
         stream(),
         media_type='text/csv',
-        headers={'Content-Disposition': f'attachment; filename="resumo_{indicador}_{fim_iso}_acima_{corte}.csv"'},
+        headers={'Content-Disposition': f'attachment; filename="resumo_{indicador}_{inicio_iso}_a_{fim_iso}_acima_{corte}.csv"'},
     )
