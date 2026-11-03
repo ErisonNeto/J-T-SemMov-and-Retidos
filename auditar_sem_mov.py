@@ -246,7 +246,7 @@ def main():
                               "pedidos:",resumo["pedidos_somados"],"Orlean:",resumo["base_orlean"],
                               resumo["erro"],flush=True)
                         destino.unlink(missing_ok=True)
-     cobertura = []
+    cobertura = []
     for dia in DIAS_ESPERADOS:
         chave = dia.isoformat()
         d = diarios.get(chave)
