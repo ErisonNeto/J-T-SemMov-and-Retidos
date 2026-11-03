@@ -14,7 +14,7 @@
         <h1>Sem Movimentação &amp; Retidos <span class="title-accent"></span></h1>
         <p>Monitoramento operacional • R/M Orlean • somente pacotes acima de 3 e 10 dias</p>
       </div>
-      <div class="datebox"><span>Referência</span><strong id="refDate">—</strong></div>
+      <div class="datebox"><span>Período</span><strong id="refDate">—</strong></div>
     </div>
   </header>
 
@@ -29,7 +29,7 @@
         <div>
           <span class="section-kicker">CONTROLE DE VISÃO</span>
           <h2>Filtros operacionais</h2>
-          <p>Exibe somente bases vinculadas ao R/M Orlean. Escolha o período de análise e refine por UF, S/C ou Base.</p>
+          <p>Exibe somente bases vinculadas ao R/M Orlean. O período selecionado é comparado com o período imediatamente anterior de mesma duração.</p>
         </div>
       </div>
       <div class="filters">
@@ -60,16 +60,16 @@
       <article class="kpi-card">
         <div class="kpi-head"><h3>Quantidade Total <span>(Acima de 3 dias)</span></h3><span id="meta3" class="meta">Meta —</span></div>
         <div class="comparison">
-          <div><label id="lblPrev3">7 dias antes</label><strong id="prev3">—</strong></div>
-          <div><label id="lblCur3">Data final</label><strong id="cur3">—</strong></div>
+          <div><label id="lblPrev3">Semana anterior</label><strong id="prev3">—</strong></div>
+          <div><label id="lblCur3">Semana selecionada</label><strong id="cur3">—</strong></div>
           <div><label>Variação semanal</label><strong id="var3">—</strong></div>
         </div>
       </article>
       <article class="kpi-card">
         <div class="kpi-head"><h3>Quantidade Total <span>(Acima de 10 dias)</span></h3><span id="meta10" class="meta">Meta —</span></div>
         <div class="comparison">
-          <div><label id="lblPrev10">7 dias antes</label><strong id="prev10">—</strong></div>
-          <div><label id="lblCur10">Data final</label><strong id="cur10">—</strong></div>
+          <div><label id="lblPrev10">Semana anterior</label><strong id="prev10">—</strong></div>
+          <div><label id="lblCur10">Semana selecionada</label><strong id="cur10">—</strong></div>
           <div><label>Variação semanal</label><strong id="var10">—</strong></div>
         </div>
       </article>
@@ -84,28 +84,28 @@
         <div id="evolutionChart" class="chart"></div>
       </article>
       <article class="panel">
-        <div class="panel-title"><div><span class="section-kicker">TEMPO EM ABERTO</span><h3>Distribuição por Aging</h3><p>Somente Aging acima de 3 dias na data final</p></div></div>
+        <div class="panel-title"><div><span class="section-kicker">TEMPO EM ABERTO</span><h3>Distribuição por Aging</h3><p>Somente Aging acima de 3 dias na data final do período</p></div></div>
         <div id="agingBars" class="bars"></div>
       </article>
     </section>
 
     <section class="grid-2">
       <article class="panel">
-        <div class="panel-title"><div><span class="section-kicker">BASES</span><h3>Piores Bases</h3><p>Ranking por volume acima de 3 dias</p></div></div>
-        <div class="table-wrap"><table><thead><tr><th>#</th><th>Base</th><th>S/C</th><th>&gt;3d</th><th>&gt;10d</th><th>Var. 7d</th></tr></thead><tbody id="basesBody"></tbody></table></div>
+        <div class="panel-title"><div><span class="section-kicker">BASES</span><h3>Piores Bases</h3><p>Ranking acumulado do período selecionado por volume acima de 3 dias</p></div></div>
+        <div class="table-wrap"><table><thead><tr><th>#</th><th>Base</th><th>S/C</th><th>&gt;3d</th><th>&gt;10d</th><th>Var. período</th></tr></thead><tbody id="basesBody"></tbody></table></div>
       </article>
       <article class="panel">
-        <div class="panel-title"><div><span class="section-kicker">GESTÃO</span><h3>Piores S/C</h3><p>Somente responsáveis vinculados ao R/M Orlean</p></div></div>
+        <div class="panel-title"><div><span class="section-kicker">GESTÃO</span><h3>Piores S/C</h3><p>Acumulado do período • somente responsáveis vinculados ao R/M Orlean</p></div></div>
         <div class="table-wrap"><table><thead><tr><th>#</th><th>S/C</th><th>&gt;3d</th><th>&gt;10d</th></tr></thead><tbody id="scBody"></tbody></table></div>
       </article>
     </section>
 
     <section class="panel" style="margin-top:16px">
-      <div class="panel-title"><div><span class="section-kicker">OCORRÊNCIAS</span><h3>Principais Motivos</h3><p>Motivos dos pacotes acima de 3 dias na data final</p></div></div>
+      <div class="panel-title"><div><span class="section-kicker">OCORRÊNCIAS</span><h3>Principais Motivos</h3><p>Motivos dos pacotes acima de 3 dias no período selecionado</p></div></div>
       <div id="motivosBars" class="bars compact"></div>
     </section>
 
-    <footer class="dashboard-footer"><span>J&amp;T Express • Qualidade Regional</span><span>R/M Orlean • regra: aging &gt; 3 dias e aging &gt; 10 dias</span></footer>
+    <footer class="dashboard-footer"><span>J&amp;T Express • Qualidade Regional</span><span>R/M Orlean • semana/período selecionado × período anterior de mesma duração</span></footer>
   </main>
 
   <div id="toast" class="toast"></div>
