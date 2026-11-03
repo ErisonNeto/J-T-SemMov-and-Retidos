@@ -14,7 +14,7 @@
         <h1>Sem Movimentação &amp; Retidos <span class="title-accent"></span></h1>
         <p>Monitoramento operacional • Indicadores e metas independentes</p>
       </div>
-      <div class="datebox"><span>Referência • D-1</span><strong id="refDate">—</strong></div>
+      <div class="datebox"><span>Referência</span><strong id="refDate">—</strong></div>
     </div>
   </header>
 
@@ -24,7 +24,8 @@
   </nav>
 
   <main class="container">
-    <section class="panel"><div class="filters-head"><div><span class="section-kicker">CONTROLE DE VISÃO</span><h2>Filtros operacionais</h2><p>Refine a gestão responsável. Resultado D-1 comparado ao mesmo dia da semana anterior.</p></div></div><div class="filters">
+    <section class="panel"><div class="filters-head"><div><span class="section-kicker">CONTROLE DE VISÃO</span><h2>Filtros operacionais</h2><p>Selecione a data e refine a gestão responsável. A comparação usa o mesmo indicador de 7 dias antes.</p></div></div><div class="filters">
+      <div class="filter"><label>Data</label><select id="fData"></select></div>
       <div class="filter"><label>UF</label><select id="fUf"><option value="">Todas</option></select></div>
       <div class="filter"><label>R/M</label><select id="fRm"><option value="">Todos</option></select></div>
       <div class="filter"><label>S/C</label><select id="fSc"><option value="">Todos</option></select></div>
@@ -39,23 +40,23 @@
         <span class="dot"></span><h2 id="indicatorTitle">Sem Movimentação</h2>
         <p id="indicatorDesc">Pedidos parados em alguma etapa</p>
       </div>
-      <button id="downloadBtn" class="download">Baixar resumo D-1 (>3d)</button>
+      <button id="downloadBtn" class="download">Baixar resumo da data (&gt;3d)</button>
     </section>
 
     <section class="kpi-grid">
       <article class="kpi-card">
         <div class="kpi-head"><h3>Quantidade Total <span>(Acima de 3 dias)</span></h3><span id="meta3" class="meta">Meta —</span></div>
         <div class="comparison">
-          <div><label id="lblPrev3">Resultado D-8</label><strong id="prev3">—</strong></div>
-          <div><label id="lblCur3">Resultado D-1</label><strong id="cur3">—</strong></div>
+          <div><label id="lblPrev3">7 dias antes</label><strong id="prev3">—</strong></div>
+          <div><label id="lblCur3">Data selecionada</label><strong id="cur3">—</strong></div>
           <div><label>Variação semanal</label><strong id="var3">—</strong></div>
         </div>
       </article>
       <article class="kpi-card">
         <div class="kpi-head"><h3>Quantidade Total <span>(Acima de 10 dias)</span></h3><span id="meta10" class="meta">Meta —</span></div>
         <div class="comparison">
-          <div><label id="lblPrev10">Resultado D-8</label><strong id="prev10">—</strong></div>
-          <div><label id="lblCur10">Resultado D-1</label><strong id="cur10">—</strong></div>
+          <div><label id="lblPrev10">7 dias antes</label><strong id="prev10">—</strong></div>
+          <div><label id="lblCur10">Data selecionada</label><strong id="cur10">—</strong></div>
           <div><label>Variação semanal</label><strong id="var10">—</strong></div>
         </div>
       </article>
@@ -63,11 +64,11 @@
 
     <section class="grid-2">
       <article class="panel chart-panel">
-        <div class="panel-title"><div><span class="section-kicker">TENDÊNCIA</span><h3 id="evolutionTitle">Evolução diária • Sem Movimentação</h3><p>Histórico diário até D-1 • Quanto menor, melhor</p></div><div class="legend"><span><i class="l3"></i>&gt;3 dias</span><span><i class="l10"></i>&gt;10 dias</span></div></div>
+        <div class="panel-title"><div><span class="section-kicker">TENDÊNCIA</span><h3 id="evolutionTitle">Evolução diária • Sem Movimentação</h3><p>Histórico diário até a data selecionada • Quanto menor, melhor</p></div><div class="legend"><span><i class="l3"></i>&gt;3 dias</span><span><i class="l10"></i>&gt;10 dias</span></div></div>
         <div id="evolutionChart" class="chart"></div>
       </article>
       <article class="panel">
-        <div class="panel-title"><div><span class="section-kicker">TEMPO EM ABERTO</span><h3>Distribuição por Aging</h3><p>Composição do D-1</p></div></div>
+        <div class="panel-title"><div><span class="section-kicker">TEMPO EM ABERTO</span><h3>Distribuição por Aging</h3><p>Composição da data selecionada</p></div></div>
         <div id="agingBars" class="bars"></div>
       </article>
     </section>
@@ -75,7 +76,7 @@
     <section class="grid-2">
       <article class="panel">
         <div class="panel-title"><div><span class="section-kicker">BASES</span><h3>Piores Bases</h3><p>Ranking por volume acima de 3 dias</p></div></div>
-        <div class="table-wrap"><table><thead><tr><th>#</th><th>Base</th><th>S/C</th><th>&gt;3d</th><th>&gt;10d</th><th>Var. D-8</th></tr></thead><tbody id="basesBody"></tbody></table></div>
+        <div class="table-wrap"><table><thead><tr><th>#</th><th>Base</th><th>S/C</th><th>&gt;3d</th><th>&gt;10d</th><th>Var. 7d</th></tr></thead><tbody id="basesBody"></tbody></table></div>
       </article>
       <article class="panel">
         <div class="panel-title"><div><span class="section-kicker">GESTÃO</span><h3>Piores S/C</h3><p>Concentração por responsável</p></div></div>
@@ -84,15 +85,15 @@
     </section>
 
     <section class="panel offenders">
-      <div class="panel-title"><div><span class="section-kicker">TRATATIVA</span><h3>Bases Ofensoras</h3><p>Principais bases do D-1 para tratativa e plano de ação</p></div><span class="hint">Planos salvos somente neste navegador; não compartilhados</span></div>
-      <p><button id="exportPlans" class="secondary">Exportar planos</button> <label>Importar planos <input id="importPlans" type="file" accept=".json"></label></p><div class="table-wrap"><table class="action-table"><thead><tr><th>Base</th><th>Resultado &gt;3d</th><th>Motivo</th><th>Plano de Ação</th><th>Responsável</th><th>Prazo</th><th></th></tr></thead><tbody id="offendersBody"></tbody></table></div>
+      <div class="panel-title"><div><span class="section-kicker">TRATATIVA</span><h3>Bases Ofensoras</h3><p>Principais bases da data selecionada para tratativa e plano de ação</p></div><span class="hint">Planos salvos somente neste navegador</span></div>
+      <div class="table-wrap"><table class="action-table"><thead><tr><th>Base</th><th>Resultado &gt;3d</th><th>Motivo</th><th>Plano de Ação</th><th>Responsável</th><th>Prazo</th><th></th></tr></thead><tbody id="offendersBody"></tbody></table></div>
     </section>
 
     <section class="panel">
-      <div class="panel-title"><div><span class="section-kicker">OCORRÊNCIAS</span><h3>Principais Motivos</h3><p>Ocorrências mais representativas do D-1</p></div></div>
+      <div class="panel-title"><div><span class="section-kicker">OCORRÊNCIAS</span><h3>Principais Motivos</h3><p>Ocorrências mais representativas da data selecionada</p></div></div>
       <div id="motivosBars" class="bars compact"></div>
     </section>
-<footer class="dashboard-footer"><span>J&amp;T Express • Qualidade Regional</span><span>D-1 × D-8 • Redução de volume representa melhora</span></footer>  </main>
+<footer class="dashboard-footer"><span>J&amp;T Express • Qualidade Regional</span><span>Data selecionada × 7 dias antes • Redução de volume representa melhora</span></footer>  </main>
 
   <div id="toast" class="toast"></div>
   <script src="/static/app.js"></script>
