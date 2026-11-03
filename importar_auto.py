@@ -16,24 +16,13 @@ import requests
 import importar_excel as core
 
 
+# Salva a função original ANTES do monkeypatch para não criar recursão.
+_data_referencia_segura = core.data_referencia
+
+
 def data_referencia_auto(path: Path, indicador: str):
-    """Prioriza a data real da coluna A; nunca usa o timestamp do download."""
-    explicita = core.data_explicita_do_nome(path)
-    if explicita is not None:
-        return explicita
-
-    if indicador == "retidos":
-        return core.inferir_data_retidos(path)
-
-    if indicador == "sem_mov":
-        dia = core.inferir_data_sem_mov_coluna_a(path)
-        if dia is not None:
-            return dia
-
-    raise ValueError(
-        f"{path.name}: data operacional não identificada de forma confiável. "
-        "É preciso um cabeçalho Data válido na coluna A ou uma data no nome."
-    )
+    """Mesma validação segura do importador principal, inclusive A versus nome."""
+    return _data_referencia_segura(path, indicador)
 
 
 def verificar_banco() -> None:
