@@ -657,16 +657,81 @@ def inferir_data_retidos(path: Path) -> date:
     return maior.date()
 
 
+
+def inferir_data_sem_mov_coluna_a(path: Path) -> Optional[date]:
+    """Lê a data de referência da coluna A quando seu cabeçalho for Data.
+
+    Não usa a data de exportação nem a data da última movimentação.
+    Confere TODAS as linhas de dados para evitar misturar dias num mesmo arquivo.
+    """
+    sheet, linha_cabecalho, _ = localizar_layout_sem_mov(path)
+    nomes_confiaveis = {"data", "data de referencia", "data do relatorio",
+                        "data da consulta", "data operacional", "data do snapshot"}
+    data_encontrada: Optional[date] = None
+    total_linhas = 0
+    with zipfile.ZipFile(path) as z:
+        strings = _shared_strings(z)
+        with z.open(sheet) as f:
+            context = etree.iterparse(f, events=("end",), tag=NS + "row")
+            for _, row in context:
+                numero_linha = int(row.get("r") or 0)
+                if numero_linha < linha_cabecalho:
+                    row.clear()
+                    continue
+                cells = row.findall(NS + "c")
+                celula_a = next((c for c in cells if _col(c.get("r", "")) == "A"), None)
+                valor = _valor_cell(celula_a, strings) if celula_a is not None else ""
+
+                if numero_linha == linha_cabecalho:
+                    if normalizar(valor) not in nomes_confiaveis:
+                        return None
+                elif cells:
+                    if not texto(valor):
+                        raise ValueError(
+                            f"{path.name}: coluna A (Data) vazia na linha {numero_linha}."
+                        )
+                    data_dt = _excel_ou_texto_para_datetime(valor)
+                    if data_dt is None:
+                        raise ValueError(
+                            f"{path.name}: data da coluna A inválida na linha {numero_linha}: {valor!r}"
+                        )
+                    dia = data_dt.date()
+                    if data_encontrada is not None and dia != data_encontrada:
+                        raise ValueError(
+                            f"{path.name}: coluna A contém mais de um dia "
+                            f"({data_encontrada} e {dia}, linha {numero_linha}). "
+                            "Não é possível atribuir uma única data ao arquivo."
+                        )
+                    data_encontrada = dia
+                    total_linhas += 1
+                row.clear()
+                while row.getprevious() is not None:
+                    del row.getparent()[0]
+
+    if total_linhas == 0:
+        raise ValueError(f"{path.name}: cabeçalho Data encontrado, mas nenhuma linha válida.")
+    if data_encontrada is None:
+        return None
+    print(f"    Sem Mov: data conferida na coluna A: {data_encontrada} "
+          f"({total_linhas:,} linhas) | {path.name}")
+    return data_encontrada
+
+
 def data_referencia(path: Path, indicador: str) -> date:
     explicita = data_explicita_do_nome(path)
     if explicita is not None:
         return explicita
+    if indicador == "sem_mov":
+        data_da_coluna = inferir_data_sem_mov_coluna_a(path)
+        if data_da_coluna is not None:
+            return data_da_coluna
+        raise ValueError(
+            f"{path.name}: a coluna A não contém uma data de referência confiável. "
+            "Confira o cabeçalho ou use uma data operacional comprovada no nome."
+        )
     if indicador == "retidos":
         return inferir_data_retidos(path)
-    raise ValueError(
-        f"Não consegui identificar a data pelo nome: {path.name}. "
-        "Inclua a data, por exemplo sem_mov_2026-11-01.xlsx."
-    )
+    raise ValueError(f"Indicador não reconhecido: {indicador}")
 
 
 # -----------------------------------------------------------------------------
