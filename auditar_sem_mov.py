@@ -177,6 +177,10 @@ def processar_planilha(path, nome_origem, data_sugerida, gestao, limite, diarios
             resumo["erro"] = "Nenhuma remessa cruzou R/M Orlean: revisar base/Gestão"
         elif resumo["aging_desconhecido"]:
             resumo["erro"] = f"{resumo['aging_desconhecido']} linhas com Aging não reconhecido"
+        elif resumo["repetidas_no_arquivo"] or resumo["repetidas_no_dia_entre_arquivos"]:
+            resumo["erro"] = ("Remessas duplicadas no mesmo dia/arquivo: revisar antes de importar "
+                             f"(internas={resumo['repetidas_no_arquivo']}, "
+                             f"entre_arquivos={resumo['repetidas_no_dia_entre_arquivos']})")
         else:
             resumo["status"] = "AMOSTRA OK" if limite else "PRE-VALIDADO"
     except Exception as exc:
