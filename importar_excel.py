@@ -87,24 +87,27 @@ def aging_sem_mov(label: str) -> Optional[int]:
     s_norm = normalizar(s)
 
     # Formato clássico da base antiga.
-    m = re.search(r"exceed\s*(\d+)\s*day", s_norm, flags=re.I)
+    m = re.search(r"exceed(?:ed)?\s*(\d+)\s*day", s_norm, flags=re.I)
     if m:
-        return int(m.group(1))
+        # 'Exceed 3 day' significa mais de 3 dias, logo pelo menos 4.
+        return int(m.group(1)) + 1
 
     # Faixas como 3-5 dias / 3~5 days: usa o início da faixa.
     m = re.search(r"(?<!\d)(\d+)\s*[-~a]\s*(\d+)", s_norm)
     if m:
         return int(m.group(1))
 
-    # Variações textuais que apareceram nas exportações novas.
-    padroes = (
-        r"(?:acima|mais|maior|over|above|exceed(?:ed)?|超过)\s*(?:de|than)?\s*(\d+)\s*(?:dia|dias|day|days|天)",
-        r"(?<!\d)(\d+)\s*(?:dia|dias|day|days|天)(?!\d)",
+    # Expressões de limite estrito: 'acima de 3 dias' representa 4+.
+    limite_estrito = re.search(
+        r"(?:acima|mais|maior|over|above|超过)\s*(?:de|than)?\s*(\d+)\s*(?:dia|dias|day|days|天)",
+        s_norm, flags=re.I,
     )
-    for padrao in padroes:
-        m = re.search(padrao, s_norm, flags=re.I)
-        if m:
-            return int(m.group(1))
+    if limite_estrito:
+        return int(limite_estrito.group(1)) + 1
+
+    m = re.search(r"(?<!\d)(\d+)\s*(?:dia|dias|day|days|天)(?!\d)", s_norm, flags=re.I)
+    if m:
+        return int(m.group(1))
 
     # Alguns arquivos trazem apenas o número de dias na coluna Aging.
     try:
@@ -413,6 +416,59 @@ def _layout_sem_mov_posicional_conhecido(path: Path) -> Optional[tuple[str, int,
     return None
 
 
+
+def _qualidade_layout_sem_mov(
+    z: zipfile.ZipFile,
+    sheet: str,
+    strings: list[str],
+    cab_linha: int,
+    mapa: dict[str, str],
+    limite: int = 160,
+) -> tuple[int, int, int, int, int]:
+    """Pontua a ABA pelos registros reais, não pelo total de cabeçalhos.
+
+    Tabelas dinâmicas e resumos frequentemente contêm os mesmos cabeçalhos
+    da lista principal, mas poucos registros e nenhuma contagem válida de pedidos.
+    """
+    importantes = {mapa[k] for k in ("remessa", "pedidos", "base_codigo", "aging_label")
+                   if k in mapa}
+    linhas = validas = pedidos_validos = remessas_validas = aging_validos = 0
+    with z.open(sheet) as f:
+        for _, row in etree.iterparse(f, events=("end",), tag=NS + "row"):
+            nr = int(row.get("r") or 0)
+            if nr <= cab_linha:
+                row.clear()
+                continue
+            campos = {}
+            for cell in row.findall(NS + "c"):
+                col = _col(cell.get("r", ""))
+                if col in importantes:
+                    campos[col] = _valor_cell(cell, strings)
+            if not campos:
+                row.clear()
+                continue
+            linhas += 1
+            remessa = texto(campos.get(mapa.get("remessa", "")))
+            pedidos = num_pedidos(campos.get(mapa.get("pedidos", "")))
+            base = norm_codigo(campos.get(mapa.get("base_codigo", "")))
+            aging = aging_sem_mov(campos.get(mapa.get("aging_label", "")))
+            rem_ok = len(remessa) >= 8 and any(c.isdigit() for c in remessa)
+            if rem_ok:
+                remessas_validas += 1
+            if pedidos > 0:
+                pedidos_validos += 1
+            if aging is not None:
+                aging_validos += 1
+            if rem_ok and pedidos > 0 and base and aging is not None:
+                validas += 1
+            row.clear()
+            while row.getprevious() is not None:
+                del row.getparent()[0]
+            if linhas >= limite:
+                break
+    return validas, pedidos_validos, remessas_validas, aging_validos, linhas
+
+
 def localizar_layout_sem_mov(path: Path) -> tuple[str, int, dict[str, str]]:
     """Localiza a aba bruta de Sem Mov e suas colunas por cabeçalho/conteúdo.
 
@@ -423,7 +479,7 @@ def localizar_layout_sem_mov(path: Path) -> tuple[str, int, dict[str, str]]:
     if antigo is not None:
         return antigo
 
-    candidatos: list[tuple[int, int, str, int, dict[str, str]]] = []
+    candidatos: list[tuple[tuple[int, int, int, int, int], int, int, str, int, dict[str, str]]] = []
 
     with zipfile.ZipFile(path) as z:
         strings = _shared_strings(z)
@@ -455,8 +511,13 @@ def localizar_layout_sem_mov(path: Path) -> tuple[str, int, dict[str, str]]:
 
                         if "aging_label" in mapa:
                             tamanho_xml = z.getinfo(sheet).file_size
+                            qualidade = _qualidade_layout_sem_mov(
+                                z, sheet, strings, numero_linha, mapa
+                            )
                             score = len(mapa)
-                            candidatos.append((score, tamanho_xml, sheet, numero_linha, mapa))
+                            candidatos.append(
+                                (qualidade, tamanho_xml, score, sheet, numero_linha, mapa)
+                            )
                             row.clear()
                             break
 
@@ -465,8 +526,16 @@ def localizar_layout_sem_mov(path: Path) -> tuple[str, int, dict[str, str]]:
                         del row.getparent()[0]
 
     if candidatos:
-        # Prioriza mais campos reconhecidos e, no empate, a base de maior tamanho.
-        _, _, sheet, numero_linha, mapa = max(candidatos, key=lambda x: (x[0], x[1]))
+        # Prioriza dados reais (pedidos/remessas/Aging), não cabeçalho de pivot.
+        qualidade, _, _, sheet, numero_linha, mapa = max(
+            candidatos, key=lambda x: (x[0][0], x[0][1], x[0][2], x[1], x[2])
+        )
+        if qualidade[0] < 3 or qualidade[1] < 3:
+            raise ValueError(
+                f"{path.name}: nenhuma aba com lista de Sem Mov confiável. "
+                f"Melhor candidato {sheet} teve {qualidade[0]} registros completos "
+                f"e {qualidade[1]} pedidos positivos em {qualidade[4]} linhas."
+            )
         return sheet, numero_linha, mapa
 
     # Compatibilidade garantida com o layout antigo conhecido por posição.
@@ -785,8 +854,8 @@ def sem_mov_records(path: Path, gestao: Dict[str, dict], data_ref: date) -> Iter
             "base_nome": texto(r.get("base_nome")) or g.get("base_nome_gestao", ""),
             "aging_label": aging_label or f"{aging} dias",
             "aging_valor": aging,
-            "acima_3": 1 if aging >= 3 else 0,
-            "acima_10": 1 if aging >= 10 else 0,
+            "acima_3": 1 if aging > 3 else 0,
+            "acima_10": 1 if aging > 10 else 0,
             "uf": g.get("uf", ""),
             "rm": g.get("rm", ""),
             "sc": g.get("sc", ""),
@@ -925,6 +994,11 @@ def processar_arquivo(
         raise ValueError(f"{path.name}: nenhuma linha reconhecida. Confira colunas e Aging.")
 
     if indicador == "sem_mov":
+        if sum(int(rec.get("pedidos") or 0) for rec in amostra) <= 0:
+            raise ValueError(
+                f"{path.name}: amostra de Sem Mov não contém pedidos positivos. "
+                "Provável aba de resumo/pivot selecionada; importação bloqueada."
+            )
         sem_match_amostra = sum(1 for rec in amostra if norm_codigo(rec.get("base_codigo")) not in gestao)
         taxa_sem_match = sem_match_amostra / len(amostra)
         if taxa_sem_match >= 0.70:
