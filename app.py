@@ -2,10 +2,12 @@ from datetime import date, timedelta
 import csv
 import io
 from pathlib import Path
+
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.responses import HTMLResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
-from config import JANELA_EVOLUCAO_DIAS, METAS
+
+from config import METAS
 from arquivos import carregar, status_fonte
 
 BASE_DIR = Path(__file__).resolve().parent
@@ -21,23 +23,43 @@ def variacao(atual, anterior):
     return round((atual - anterior) / anterior * 100, 2)
 
 
-def filtrar(df, indicador, uf='', rm='', sc='', base=''):
-    df = df[(df.indicador == indicador) & (df.rm != '')]
-    for col, value in [('uf', uf), ('rm', rm), ('sc', sc), ('base_codigo', base)]:
+def somente_orlean(df):
+    if df.empty:
+        return df.copy()
+    return df[df['rm'].astype(str).str.contains('ORLEAN', case=False, na=False)].copy()
+
+
+def filtrar(df, indicador, uf='', sc='', base=''):
+    df = somente_orlean(df)
+    df = df[df.indicador == indicador]
+    for col, value in [('uf', uf), ('sc', sc), ('base_codigo', base)]:
         if value:
             df = df[df[col] == value]
     return df.copy()
 
 
 def quantidades(df):
-    return {f'acima_{c}': int(df.loc[df[f'acima_{c}'] == 1, 'pedidos'].sum()) for c in ('3', '10')}
+    if df.empty:
+        return {'acima_3': 0, 'acima_10': 0}
+    aging = df['aging_valor'].fillna(0)
+    pedidos = df['pedidos'].fillna(0)
+    return {
+        'acima_3': int(pedidos[aging > 3].sum()),
+        'acima_10': int(pedidos[aging > 10].sum()),
+    }
 
 
 def ranking(df, columns, limit):
     if df.empty:
         return []
-    df = df.assign(q3=df.pedidos * df.acima_3, q10=df.pedidos * df.acima_10)
+    df = df.assign(
+        q3=df.pedidos.where(df.aging_valor > 3, 0),
+        q10=df.pedidos.where(df.aging_valor > 10, 0),
+    )
     g = df.groupby(columns, dropna=False)[['q3', 'q10']].sum().reset_index()
+    g = g[g.q3 > 0]
+    if g.empty:
+        return []
     g = g.sort_values(['q3'] + columns, ascending=[False] + [True] * len(columns)).head(limit)
     return [
         {**{c: r[c] for c in columns}, 'acima_3': int(r['q3']), 'acima_10': int(r['q10'])}
@@ -46,7 +68,7 @@ def ranking(df, columns, limit):
 
 
 def motivos(df):
-    df = df[df.motivo != '']
+    df = df[(df.motivo != '') & (df.aging_valor > 3)]
     if df.empty:
         return []
     g = df.groupby('motivo').pedidos.sum().sort_values(ascending=False).head(10)
@@ -54,25 +76,48 @@ def motivos(df):
 
 
 def datas_disponiveis(raw, indicador):
+    raw = somente_orlean(raw)
     datas = raw.loc[raw.indicador == indicador, 'data'].dropna().astype(str)
-    return sorted({x for x in datas if x}, reverse=True)
+    return sorted({x for x in datas if x})
 
 
-def resolver_data(raw, indicador, data_ref=''):
+def resolver_periodo(raw, indicador, data_inicial='', data_final=''):
     disponiveis = datas_disponiveis(raw, indicador)
     if not disponiveis:
         return None, None, disponiveis
 
-    escolhida = data_ref.strip() if data_ref else disponiveis[0]
-    if escolhida not in disponiveis:
-        raise HTTPException(status_code=404, detail='A data selecionada não está carregada para este indicador.')
+    datas_obj = [date.fromisoformat(x) for x in disponiveis]
+    menor = min(datas_obj)
+    maior = max(datas_obj)
 
     try:
-        atual = date.fromisoformat(escolhida)
+        fim = date.fromisoformat(data_final) if data_final else maior
+        inicio = date.fromisoformat(data_inicial) if data_inicial else max(menor, fim - timedelta(days=13))
     except ValueError as exc:
         raise HTTPException(status_code=400, detail='Data inválida. Use AAAA-MM-DD.') from exc
 
-    return atual, atual - timedelta(days=7), disponiveis
+    if inicio > fim:
+        raise HTTPException(status_code=400, detail='A data inicial não pode ser maior que a data final.')
+    if fim < menor or inicio > maior:
+        raise HTTPException(status_code=404, detail='O período selecionado não possui dados carregados.')
+
+    return inicio, fim, disponiveis
+
+
+def aging_distribuicao(df):
+    df = df[df.aging_valor > 3]
+    if df.empty:
+        return []
+    g = df.groupby('aging_valor').pedidos.sum().sort_index()
+    return [
+        {
+            'label': f'{int(aging)} dias',
+            'qtd': int(qtd),
+            'aging': int(aging),
+            'acima_10': bool(int(aging) > 10),
+        }
+        for aging, qtd in g.items()
+    ]
 
 
 @app.get('/', response_class=HTMLResponse)
@@ -82,30 +127,39 @@ def home():
 
 @app.get('/api/filters')
 def filters(indicador: str = Query(pattern='^(sem_mov|retidos)$')):
-    df = carregar()
+    df = somente_orlean(carregar())
     df_ind = df[df.indicador == indicador]
-    out = {c: sorted(x for x in df_ind[c].unique() if x) for c in ('uf', 'rm', 'sc')}
-    b = df_ind[df_ind.base_codigo != ''][['base_codigo', 'base_nome']].drop_duplicates().sort_values('base_nome')
-    out['bases'] = [{'codigo': r.base_codigo, 'nome': r.base_nome or r.base_codigo} for r in b.itertuples()]
+    out = {c: sorted(x for x in df_ind[c].unique() if x) for c in ('uf', 'sc')}
+    b = (
+        df_ind[df_ind.base_codigo != ''][['base_codigo', 'base_nome']]
+        .drop_duplicates()
+        .sort_values(['base_nome', 'base_codigo'])
+    )
+    out['bases'] = [
+        {'codigo': r.base_codigo, 'nome': r.base_nome or r.base_codigo}
+        for r in b.itertuples()
+    ]
     out['datas'] = datas_disponiveis(df, indicador)
+    out['rm'] = 'Orlean'
     return out
 
 
 @app.get('/api/dashboard')
 def dashboard(
     indicador: str = Query(pattern='^(sem_mov|retidos)$'),
-    data: str = '',
+    data_inicial: str = '',
+    data_final: str = '',
     uf: str = '',
-    rm: str = '',
     sc: str = '',
     base: str = '',
 ):
     raw = carregar()
-    atual_data, anterior_data, disponiveis = resolver_data(raw, indicador, data)
+    inicio_data, fim_data, disponiveis = resolver_periodo(raw, indicador, data_inicial, data_final)
 
-    if atual_data is None:
+    if inicio_data is None or fim_data is None:
         return {
             'indicador': indicador,
+            'periodo': {'inicio': None, 'fim': None},
             'datas': {'atual': None, 'anterior': None, 'tem_atual': False, 'tem_anterior': False},
             'metrics': {
                 'acima_3': {'atual': None, 'anterior': None, 'variacao': None, 'meta': METAS[indicador]['acima_3'], 'dentro_meta': None},
@@ -115,20 +169,23 @@ def dashboard(
             'ultima_carga': None, 'fonte': status_fonte(),
         }
 
-    atual_iso = atual_data.isoformat()
+    fim_iso = fim_data.isoformat()
+    anterior_data = fim_data - timedelta(days=7)
     anterior_iso = anterior_data.isoformat()
+    tem_atual = fim_iso in set(disponiveis)
     tem_anterior = anterior_iso in set(disponiveis)
 
-    df = filtrar(raw, indicador, uf, rm, sc, base)
-    atual = df[df.data == atual_iso]
+    df = filtrar(raw, indicador, uf, sc, base)
+    atual = df[df.data == fim_iso]
     anterior = df[df.data == anterior_iso]
+
     q_atual = quantidades(atual)
     q_anterior = quantidades(anterior)
 
     metrics = {}
     for c in ('3', '10'):
         key = f'acima_{c}'
-        a = q_atual[key]
+        a = q_atual[key] if tem_atual else None
         p = q_anterior[key] if tem_anterior else None
         meta = METAS[indicador][key]
         metrics[key] = {
@@ -136,45 +193,39 @@ def dashboard(
             'anterior': p,
             'variacao': variacao(a, p),
             'meta': meta,
-            'dentro_meta': a <= meta if meta is not None else None,
+            'dentro_meta': a <= meta if (a is not None and meta is not None) else None,
         }
 
-    inicio = (atual_data - timedelta(days=JANELA_EVOLUCAO_DIAS - 1)).isoformat()
+    inicio_iso = inicio_data.isoformat()
+    periodo_df = df[(df.data >= inicio_iso) & (df.data <= fim_iso)]
     evo = [
         {'data': dt, **quantidades(g)}
-        for dt, g in df[(df.data >= inicio) & (df.data <= atual_iso)].groupby('data', sort=True)
+        for dt, g in periodo_df.groupby('data', sort=True)
     ]
 
-    aging = []
-    if not atual.empty:
-        ag = atual.groupby('aging_label').agg(ordem=('aging_valor', 'min'), qtd=('pedidos', 'sum')).sort_values('ordem')
-        aging = [{'label': str(label) or 'Sem faixa', 'qtd': int(r.qtd)} for label, r in ag.iterrows()]
-
-    bases = ranking(atual, ['base_codigo', 'base_nome', 'sc'], 10)
+    bases = ranking(atual, ['base_codigo', 'base_nome', 'sc'], 20)
     for b in bases:
         prev = quantidades(anterior[anterior.base_codigo == b['base_codigo']])['acima_3'] if tem_anterior else None
-        mot = motivos(atual[(atual.base_codigo == b['base_codigo']) & (atual.acima_3 == 1)])
-        b.update(
-            variacao=variacao(b['acima_3'], prev),
-            motivo=mot[0]['motivo'] if mot else '',
-            plano_acao='', responsavel='', prazo='',
-        )
+        b['variacao'] = variacao(b['acima_3'], prev)
+        mot = motivos(atual[atual.base_codigo == b['base_codigo']])
+        b['motivo'] = mot[0]['motivo'] if mot else ''
 
     return {
         'indicador': indicador,
+        'periodo': {'inicio': inicio_iso, 'fim': fim_iso},
         'datas': {
-            'atual': atual_iso,
+            'atual': fim_iso,
             'anterior': anterior_iso,
-            'tem_atual': True,
+            'tem_atual': tem_atual,
             'tem_anterior': tem_anterior,
         },
         'metrics': metrics,
         'evolucao': evo,
-        'aging': aging,
+        'aging': aging_distribuicao(atual),
         'top_bases': bases,
-        'top_sc': ranking(atual[atual.sc != ''], ['sc'], 15),
+        'top_sc': ranking(atual[atual.sc != ''], ['sc'], 20),
         'motivos': motivos(atual),
-        'ultima_carga': disponiveis[0] if disponiveis else None,
+        'ultima_carga': disponiveis[-1] if disponiveis else None,
         'fonte': status_fonte(),
     }
 
@@ -182,20 +233,20 @@ def dashboard(
 @app.get('/api/download')
 def download(
     indicador: str = Query(pattern='^(sem_mov|retidos)$'),
-    data: str = '',
-    corte: str = Query(default='3', pattern='^(3|10|todos)$'),
-    uf: str = '', rm: str = '', sc: str = '', base: str = '',
+    data_final: str = '',
+    corte: str = Query(default='3', pattern='^(3|10)$'),
+    uf: str = '', sc: str = '', base: str = '',
 ):
     raw = carregar()
-    atual_data, _, _ = resolver_data(raw, indicador, data)
-    if atual_data is None:
+    _, fim_data, _ = resolver_periodo(raw, indicador, '', data_final)
+    if fim_data is None:
         raise HTTPException(status_code=404, detail='Não há dados carregados para este indicador.')
 
-    atual_iso = atual_data.isoformat()
-    df = filtrar(raw, indicador, uf, rm, sc, base)
-    df = df[df.data == atual_iso]
-    if corte != 'todos':
-        df = df[df[f'acima_{corte}'] == 1]
+    fim_iso = fim_data.isoformat()
+    df = filtrar(raw, indicador, uf, sc, base)
+    df = df[df.data == fim_iso]
+    limite = 3 if corte == '3' else 10
+    df = df[df.aging_valor > limite]
 
     def stream():
         def safe(v):
@@ -215,5 +266,5 @@ def download(
     return StreamingResponse(
         stream(),
         media_type='text/csv',
-        headers={'Content-Disposition': f'attachment; filename="resumo_{indicador}_{atual_iso}_acima_{corte}.csv"'},
+        headers={'Content-Disposition': f'attachment; filename="resumo_{indicador}_{fim_iso}_acima_{corte}.csv"'},
     )
