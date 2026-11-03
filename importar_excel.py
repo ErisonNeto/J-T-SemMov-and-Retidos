@@ -836,16 +836,26 @@ def inferir_data_sem_mov_coluna_a(path: Path) -> Optional[date]:
 
 def data_referencia(path: Path, indicador: str) -> date:
     explicita = data_explicita_do_nome(path)
-    if explicita is not None:
-        return explicita
     if indicador == "sem_mov":
+        # Uma renomeação manual pode indicar um dia diferente do snapshot real.
+        # Quando a coluna A é 'Data', sua referência deve concordar com o nome.
         data_da_coluna = inferir_data_sem_mov_coluna_a(path)
+        if explicita is not None and data_da_coluna is not None and explicita != data_da_coluna:
+            raise ValueError(
+                f"DATA DIVERGENTE em {path.name}: nome indica {explicita}, "
+                f"mas a coluna A contém {data_da_coluna}. "
+                "Renomeie de acordo com a data operacional real; importação bloqueada."
+            )
         if data_da_coluna is not None:
             return data_da_coluna
+        if explicita is not None:
+            return explicita
         raise ValueError(
             f"{path.name}: a coluna A não contém uma data de referência confiável. "
             "Confira o cabeçalho ou use uma data operacional comprovada no nome."
         )
+    if explicita is not None:
+        return explicita
     if indicador == "retidos":
         return inferir_data_retidos(path)
     raise ValueError(f"Indicador não reconhecido: {indicador}")
