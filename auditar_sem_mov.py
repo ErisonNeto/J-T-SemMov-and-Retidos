@@ -24,7 +24,7 @@ from pathlib import Path
 
 import importar_excel as core
 
-DIAS_ESPERADOS = [date(2026, 10, 19) + timedelta(days=i) for i in range(14)]
+DIAS_ESPERADOS = [date(2026, 10, 19) + timedelta(days=i) for i in range(15)]
 MAX_COMPACTADO = 2_500_000_000  # limite por planilha para evitar extrações acidentais gigantes
 
 
@@ -66,9 +66,9 @@ def encontrar_origem(entradas):
             raise FileNotFoundError(f"Arquivo não encontrado: {x}")
         if x.is_dir():
             for f in sorted(x.rglob("*")):
-                if f.is_file() and f.suffix.lower() in (".zip", ".xlsx"):
+                if f.is_file() and not f.name.startswith("~$") and f.suffix.lower() in (".zip", ".xlsx"):
                     yield f
-        else:
+        elif not x.name.startswith("~$"):
             yield x
 
 
@@ -100,12 +100,13 @@ def inspecionar_coluna_a(path, aba, linha_cabecalho, limite=250):
     datas = set()
     cabecalho = ""
     lidas = 0
+    datas_validas = 0
     with zipfile.ZipFile(path) as z:
         strings = core._shared_strings(z)
         with z.open(aba) as f:
             for _, row in core.etree.iterparse(f, events=("end",), tag=core.NS + "row"):
                 numero_linha = int(row.get("r") or 0)
-                if numero_linha > linha_cabecalho + limite:
+                if limite and numero_linha > linha_cabecalho + limite:
                     row.clear()
                     break
                 celula_a = None
@@ -123,18 +124,19 @@ def inspecionar_coluna_a(path, aba, linha_cabecalho, limite=250):
                     d = _data_em_celula(valor)
                     if d and 2020 <= d.year <= 2035:
                         datas.add(d.isoformat())
+                        datas_validas += 1
                 row.clear()
                 while row.getprevious() is not None:
                     del row.getparent()[0]
     titulo = core.normalizar(cabecalho)
-    # Só estas nomenclaturas identificam de forma inequívoca a data do snapshot.
-    confiavel = (
-        ("referencia" in titulo or "relatorio" in titulo or "consulta" in titulo or
-         "fotografia" in titulo or "snapshot" in titulo)
-        and ("data" in titulo or "dia" in titulo)
-        and "ultima" not in titulo and "moviment" not in titulo
-    )
-    data_segura = next(iter(datas)) if confiavel and len(datas) == 1 and lidas else ""
+    # O layout J&T usa exatamente o cabeçalho Data para a data do snapshot.
+    # Nunca usar A quando o cabeçalho é Número da Remessa ou última operação.
+    confiavel = titulo in {
+        "data", "data de referencia", "data do relatorio",
+        "data da consulta", "data operacional", "data do snapshot"
+    }
+    data_segura = (next(iter(datas)) if confiavel and len(datas) == 1
+                   and lidas >= 1 and datas_validas == lidas else "")
     return {
         "cabecalho": cabecalho,
         "amostras": " | ".join(exemplos),
@@ -168,11 +170,16 @@ def processar_planilha(path, nome_origem, data_sugerida, gestao, limite, diarios
     cod_exemplos = []
     try:
         aba, cab_linha, mapa = core.localizar_layout_sem_mov(path)
-        info_a = inspecionar_coluna_a(path, aba, cab_linha)
+        info_a = inspecionar_coluna_a(path, aba, cab_linha, limite=min(limite, 300) if limite else 0)
         resumo["coluna_a_cabecalho"] = info_a["cabecalho"]
         resumo["coluna_a_exemplos"] = info_a["amostras"]
         resumo["coluna_a_datas_encontradas"] = " | ".join(info_a["datas"][:12])
         resumo["coluna_a_data_confiavel"] = info_a["data_segura"]
+        if data_sugerida and info_a["data_segura"] and data_sugerida != info_a["data_segura"]:
+            raise ValueError(
+                f"Data do nome ({data_sugerida}) diverge da coluna A "
+                f"({info_a['data_segura']})."
+            )
         if not data_sugerida and info_a["data_segura"]:
             data_sugerida = info_a["data_segura"]
             resumo["origem_data"] = "coluna A (referencia unica)"
@@ -353,7 +360,8 @@ def main():
             status = 'PRE-VALIDADO'
         cobertura.append({
             'data': chave,
-            'semana': 'W43' if dia <= date(2026, 10, 25) else 'W44',
+            'semana': ('W43' if dia <= date(2026, 10, 25) else
+                       'W44' if dia <= date(2026, 11, 1) else 'W45'),
             'arquivos': len(arquivos),
             'status': status,
             'remessas_unicas_dia': len(d['remessas']) if d else 0,
