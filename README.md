@@ -91,3 +91,29 @@ Validação recomendada:
 ```powershell
 python importar_excel.py --dry-run
 ```
+
+
+## Exportações J&T com nomes originais (04/11/2026)
+
+Sem renomear os Excel:
+
+- `Monitoramento de movimentação em tempo real (novo)(Detalhes)33620020261104091316.xlsx` = `sem_mov`.
+- `Estatística de itens retidos na base (dias corridos)(Detalhes)33620020261104091340.xlsx` = `retidos`.
+
+Coloque-os em `dados/sem_mov/` e `dados/retidos/`, respectivamente. A Gestão é lida de `dados/Gestão de colaboradores.xlsx`, ou de outro arquivo passado por `--gestao`.
+
+Valide antes de enviar ao PostgreSQL:
+
+```powershell
+python .\importar_excel.py ".\dados\sem_mov\Monitoramento de movimentação em tempo real (novo)(Detalhes)33620020261104091316.xlsx" ".\dados\retidos\Estatística de itens retidos na base (dias corridos)(Detalhes)33620020261104091340.xlsx" --dry-run --strict
+```
+
+Confirme a data operacional mostrada no terminal. Os 14 dígitos do nome são a data/hora da **exportação**, que pode diferir da data do snapshot. Sem Mov busca a coluna A `Data`; Retidos infere pelos últimos horários operacionais disponíveis. `--data-ref AAAA-MM-DD` permite indicar uma data operacional previamente confirmada; o código bloqueia divergências conhecidas.
+
+Depois de validar a origem e conferir a data, importe com lotes pequenos:
+
+```powershell
+python .\importar_excel.py ".\dados\sem_mov\Monitoramento de movimentação em tempo real (novo)(Detalhes)33620020261104091316.xlsx" ".\dados\retidos\Estatística de itens retidos na base (dias corridos)(Detalhes)33620020261104091340.xlsx" --strict --lote 100
+```
+
+Se houver timeout, consulte o PostgreSQL antes de repetir. O `retomar_sem_mov.py` suporta `--data-ref` e retoma apenas se o prefixo existente no banco corresponder ao arquivo. Não utilize esse fluxo genérico para o dia 28/10/2026, que possui 18 linhas antigas auditadas.
