@@ -1049,6 +1049,55 @@ def enviar_lote(session: requests.Session, registros: list[dict]) -> None:
         raise RuntimeError(f"JT API retornou HTTP {resp.status_code}: {resp.text[:1500]}")
 
 
+
+def verificar_layout_sem_mov_atual(path: Path) -> tuple[bool, str]:
+    """Confirma que a coluna de base foi mapeada pela semântica do CABEÇALHO.
+
+    Dados nacionais frequentemente vêm ordenados por base. Assim, as primeiras
+    3.000 linhas podem ter baixa correspondência com uma Gestão regional,
+    mesmo que a coluna e o arquivo estejam corretos.
+    """
+    sheet, linha, mapa = localizar_layout_sem_mov(path)
+    campos = {k: mapa.get(k, "") for k in (
+        "base_codigo", "base_nome", "aging_label", "remessa", "pedidos"
+    )}
+    cabecalhos = {}
+    with zipfile.ZipFile(path) as z:
+        strings = _shared_strings(z)
+        with z.open(sheet) as f:
+            for _, row in etree.iterparse(f, events=("end",), tag=NS + "row"):
+                if int(row.get("r") or 0) == linha:
+                    for cell in row.findall(NS + "c"):
+                        letra = _col(cell.get("r", ""))
+                        if letra in campos.values():
+                            cabecalhos[letra] = normalizar(_valor_cell(cell, strings))
+                    row.clear()
+                    break
+                row.clear()
+                while row.getprevious() is not None:
+                    del row.getparent()[0]
+
+    codigo = cabecalhos.get(campos["base_codigo"], "")
+    aging = cabecalhos.get(campos["aging_label"], "")
+    remessa = cabecalhos.get(campos["remessa"], "")
+    pedidos = cabecalhos.get(campos["pedidos"], "")
+    nome = cabecalhos.get(campos["base_nome"], "")
+    confiavel = (
+        "codigo" in codigo and "base" in codigo and "mais recente" in codigo
+        and "aging" in aging
+        and "remessa" in remessa
+        and "pedido" in pedidos
+        and ("mais recente" in nome or not campos["base_nome"])
+    )
+    detalhes = (
+        f"aba={sheet} | base={campos['base_codigo']} ({codigo}) "
+        f"| nome={campos['base_nome']} ({nome}) "
+        f"| aging={campos['aging_label']} ({aging}) "
+        f"| remessa={campos['remessa']} ({remessa})"
+    )
+    return confiavel, detalhes
+
+
 def processar_arquivo(
     path: Path,
     indicador: str,
@@ -1081,17 +1130,28 @@ def processar_arquivo(
         sem_match_amostra = sum(1 for rec in amostra if norm_codigo(rec.get("base_codigo")) not in gestao)
         taxa_sem_match = sem_match_amostra / len(amostra)
         if taxa_sem_match >= 0.70:
-            exemplos = []
-            for rec in amostra:
-                cod = norm_codigo(rec.get("base_codigo"))
-                if cod and cod not in gestao and cod not in exemplos:
-                    exemplos.append(cod)
-                if len(exemplos) >= 8:
-                    break
-            raise ValueError(
-                f"cruzamento com Gestão reprovado: {taxa_sem_match:.1%} da amostra sem correspondência. "
-                f"Provável coluna errada de código da base. Exemplos: {', '.join(exemplos) or '-'}"
-            )
+            estrutura_ok, detalhes = verificar_layout_sem_mov_atual(path)
+            if estrutura_ok:
+                print(
+                    f"  AVISO {path.name}: {taxa_sem_match:.1%} sem Gestão nas "
+                    f"primeiras {len(amostra):,} linhas (amostra possivelmente "
+                    "ordenada por base). Cabeçalhos da base atual conferidos: "
+                    f"{detalhes}",
+                    flush=True,
+                )
+            else:
+                exemplos = []
+                for rec in amostra:
+                    cod = norm_codigo(rec.get("base_codigo"))
+                    if cod and cod not in gestao and cod not in exemplos:
+                        exemplos.append(cod)
+                    if len(exemplos) >= 8:
+                        break
+                raise ValueError(
+                    f"cruzamento com Gestão reprovado: {taxa_sem_match:.1%} "
+                    f"na amostra. Layout não confirmado: {detalhes}. "
+                    f"Exemplos: {', '.join(exemplos) or '-'}"
+                )
 
     for rec in chain(amostra, gerador):
         chave = registro_chave(rec)
