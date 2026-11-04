@@ -215,6 +215,31 @@ def consulta_dia(session, dia, codigos):
         for key in ("indicador", "data", "base_codigo", "base_nome", "uf", "rm", "sc"):
             record[key] = strvalor(record[key])
         output.append(record)
+
+    # Confirma que a JT API não truncou linhas agrupadas na resposta.
+    confer = query(
+        session,
+        f"""SELECT COUNT(*)::bigint AS registros
+            FROM public.sem_mov_retidos_detalhe
+            WHERE data = %s::date
+              AND indicador IN ('sem_mov','retidos')
+              AND (
+                 POSITION('ORLEAN' IN UPPER(COALESCE(rm,''))) > 0
+                 OR base_codigo IN ({clausula})
+              )""",
+        [dia.isoformat()],
+    )
+    if len(confer) != 1:
+        raise RuntimeError(f"Dia {dia}: total de conferência não retornou uma linha")
+    valor = confer[0]
+    total_banco = int(valor["registros"] if isinstance(valor, dict) else valor[0])
+    total_agrupado = sum(x["registros"] for x in output)
+    if total_banco != total_agrupado:
+        raise RuntimeError(
+            f"Dia {dia}: consulta agregada retornou {total_agrupado:,} registros, "
+            f"mas a contagem independente identificou {total_banco:,}. "
+            "A API pode ter truncado o resultado; não confiar na auditoria deste dia."
+        )
     return output
 
 
