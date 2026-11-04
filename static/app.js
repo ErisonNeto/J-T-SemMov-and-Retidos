@@ -87,7 +87,34 @@ function limparResultadosAoFiltrar(){
   for(const k of ['prev','cur','var'])$('#'+k+c).textContent='—';
  });
 }
-async function loadDashboard(){const request=++state.request;document.body.setAttribute('aria-busy','true');limparResultadosAoFiltrar();$('#loadError').classList.add('hidden');try{if($('#fDataInicial').value>$('#fDataFinal').value){toast('Data inicial não pode ser maior que a final');return}const d=await json('/api/dashboard?'+q());if(request!==state.request)return;const fs=d.fonte||{};$('#sourceStatus').textContent=fs.fonte?fs.fonte+(fs.sincronizado_em?' • Sincronizado: '+new Date(fs.sincronizado_em).toLocaleString('pt-BR'):''):'';$('#sourceWarning').textContent=fs.aviso||'';$('#sourceWarning').classList.toggle('hidden',!fs.aviso);renderKpis(d);lineChart($('#evolutionChart'),d.evolucao);bars($('#agingBars'),d.aging);renderTables(d)}catch(e){if(request===state.request){$('#loadError').textContent='Não foi possível carregar este indicador. Verifique a conexão e o período selecionado.';$('#loadError').classList.remove('hidden')}}finally{if(request===state.request)document.body.setAttribute('aria-busy','false')}}
+function renderSnapshot(d){
+ $('#snapshotDate').textContent=d.data?'• '+fmtDate(d.data):'• sem dados';
+ const campos=['d1','d2','d3','d4','acima4','total','acima3'];
+ const tbody=$('#snapshotBody');
+ const lista=d.bases||[];
+ if(!lista.length){
+  tbody.innerHTML='<tr><td colspan="9" class="empty">Nenhuma remessa para o filtro e a data selecionados.</td></tr>';
+ }else{
+  tbody.innerHTML=lista.map(x=>'<tr>'+
+   '<td><strong>'+esc(x.base_nome||x.base_codigo)+'</strong><div class="base-secondary">'+esc(x.base_codigo)+'</div></td>'+
+   '<td>'+esc(x.sc||'—')+'</td>'+
+   campos.map(k=>'<td class="num">'+fmt(x[k])+'</td>').join('')+
+   '</tr>').join('');
+ }
+ const total=d.total||{};
+ $('#snapshotFoot').innerHTML='<tr><th>Total</th><th>—</th>'+
+  campos.map(k=>'<th class="num">'+fmt(total[k]||0)+'</th>').join('')+'</tr>';
+ $('#snapshotNote').textContent=d.aviso||'Comparar somente snapshots da mesma data.';
+}
+async function loadDashboard(){const request=++state.request;document.body.setAttribute('aria-busy','true');limparResultadosAoFiltrar();$('#snapshotBody').innerHTML='<tr><td colspan="9" class="empty">Conferindo remessas do dia final...</td></tr>';$('#snapshotFoot').replaceChildren();$('#loadError').classList.add('hidden');try{if($('#fDataInicial').value>$('#fDataFinal').value){toast('Data inicial não pode ser maior que a final');return}const d=await json('/api/dashboard?'+q());if(request!==state.request)return;const fs=d.fonte||{};$('#sourceStatus').textContent=fs.fonte?fs.fonte+(fs.sincronizado_em?' • Sincronizado: '+new Date(fs.sincronizado_em).toLocaleString('pt-BR'):''):'';$('#sourceWarning').textContent=fs.aviso||'';$('#sourceWarning').classList.toggle('hidden',!fs.aviso);renderKpis(d);lineChart($('#evolutionChart'),d.evolucao);bars($('#agingBars'),d.aging);renderTables(d);
+const sp=new URLSearchParams({indicador:state.indicador,data:$('#fDataFinal').value,uf:$('#fUf').value,sc:$('#fSc').value,base:$('#fBase').value});
+json('/api/snapshot?'+sp).then(snapshot=>{if(request===state.request)renderSnapshot(snapshot)}).catch(err=>{
+ if(request===state.request){
+  $('#snapshotDate').textContent='• sem conferência';
+  $('#snapshotBody').innerHTML='<tr><td colspan="9" class="empty">Sem conferência para essa data ou filtro. Verifique a carga diária.</td></tr>';
+  $('#snapshotFoot').replaceChildren();
+ }
+});}catch(e){if(request===state.request){$('#loadError').textContent='Não foi possível carregar este indicador. Verifique a conexão e o período selecionado.';$('#loadError').classList.remove('hidden')}}finally{if(request===state.request)document.body.setAttribute('aria-busy','false')}}
 async function switchTab(ind){++state.request;state.indicador=ind;$$('.tab').forEach(x=>{x.classList.toggle('active',x.dataset.indicador===ind);x.setAttribute('aria-pressed',x.dataset.indicador===ind)});const name=ind==='sem_mov'?'Sem Movimentação':'Retidos';$('#indicatorTitle').textContent=name;$('#evolutionTitle').textContent='Evolução diária • '+name;$('#indicatorDesc').textContent='Pedidos com aging acima de 3 dias e acima de 10 dias • R/M Orlean';['3','10'].forEach(c=>{['prev','cur','var'].forEach(k=>$('#'+k+c).textContent='—');$('#meta'+c).textContent='Meta —'});['evolutionChart','agingBars','basesBody','scBody'].forEach(id=>$('#'+id).replaceChildren());['#fUf','#fSc','#fBase'].forEach(s=>$(s).value='');document.body.setAttribute('aria-busy','true');try{await loadFilters(ind);if(state.indicador===ind)await loadDashboard()}catch(e){if(state.indicador===ind){document.body.setAttribute('aria-busy','false');toast('Erro ao carregar filtros. Tente novamente.')}}}
 $$('.tab').forEach(t=>t.onclick=()=>switchTab(t.dataset.indicador));
 ['#fDataInicial','#fDataFinal','#fUf','#fSc','#fBase'].forEach(s=>$(s).onchange=()=>loadDashboard());
