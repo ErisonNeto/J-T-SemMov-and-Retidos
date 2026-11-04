@@ -121,11 +121,20 @@ def aging_sem_mov(label: str) -> Optional[int]:
 
 
 def aging_retidos(label: str) -> Optional[int]:
-    s = label or ""
-    if "超15天" in s:
-        return 16
-    m = re.search(r"(\d+)天滞留", s)
-    return int(m.group(1)) if m else None
+    """Lê retenção em chinês, português, inglês ou número de dias.
+
+    Ex.: '3天滞留', '超15天', '5 dias', 'Exceed 3 day', '12'.
+    """
+    s = texto(label)
+    if not s:
+        return None
+    m = re.search(r"超\s*(\d+)\s*天", s)
+    if m:
+        return int(m.group(1)) + 1
+    m = re.search(r"(\d+)\s*天滞留", s)
+    if m:
+        return int(m.group(1))
+    return aging_sem_mov(s)
 
 
 def data_exportacao_nome(path: Path) -> Optional[date]:
@@ -1363,6 +1372,7 @@ def localizar_arquivos(
     fontes: list[str],
     gestao_path: Path,
     data_forcada: Optional[date] = None,
+    strict_reconhecimento: bool = False,
 ) -> list[tuple[Path, str, date]]:
     encontrados: dict[tuple[str, str, str], tuple[Path, str, date]] = {}
     gestao_real = gestao_path.resolve() if gestao_path.exists() else None
@@ -1381,10 +1391,9 @@ def localizar_arquivos(
             chave = (indicador, data_ref.isoformat(), path.name.lower())
             encontrados[chave] = (path, indicador, data_ref)
         except Exception as exc:
-            if "DATA DIVERGENTE" in str(exc):
-                # Falha antes da primeira carga: jamais importar os demais
-                # arquivos quando há uma data incorreta na pasta.
-                raise ValueError(str(exc)) from exc
+            if "DATA DIVERGENTE" in str(exc) or strict_reconhecimento:
+                # Em modo estrito, problemas de data/layout não são ignorados.
+                raise ValueError(f"{path.name}: {exc}") from exc
             print(f"  IGNORADO: {path.name} | {exc}")
 
     return sorted(encontrados.values(), key=lambda x: (x[2], x[1], x[0].name.lower()))
@@ -1483,7 +1492,11 @@ def main() -> None:
     if not args.dry_run:
         print(f"Destino: {API_URL}/import")
 
-    arquivos = localizar_arquivos(args.fontes, gestao_path, data_forcada=data_forcada)
+    arquivos = localizar_arquivos(
+        args.fontes, gestao_path,
+        data_forcada=data_forcada,
+        strict_reconhecimento=args.strict,
+    )
     if not arquivos:
         print("Nenhum XLSX de SEM MOV/RETIDOS encontrado.")
         return
