@@ -188,6 +188,16 @@ def dashboard(
     anterior_inicio_iso = anterior_inicio.isoformat()
     anterior_fim_iso = anterior_fim.isoformat()
 
+    dias_provisorios = []
+    if indicador == "sem_mov" and "origem_dados" in raw.columns:
+        proxy = raw.loc[
+            (raw["indicador"] == "sem_mov")
+            & (raw["origem_dados"] != "ORIGINAL")
+            & (raw["data"] >= anterior_inicio_iso)
+            & (raw["data"] <= fim_iso)
+        ]
+        dias_provisorios = sorted(proxy["data"].dropna().astype(str).unique().tolist())
+
     disponiveis_set = set(disponiveis)
     esperadas_atual = datas_entre(inicio_data, fim_data)
     esperadas_anterior = datas_entre(anterior_inicio, anterior_fim)
@@ -242,6 +252,12 @@ def dashboard(
             'anterior_completo': anterior_completo,
             'faltantes_atual': faltantes_atual,
             'faltantes_anterior': faltantes_anterior,
+            'dias_provisorios': dias_provisorios,
+            'aviso_provisorio': (
+                "ATENÇÃO: 28/10 é uma ESTIMATIVA, espelhada de 30/10/2026. "
+                "Não é dado real de 28/10. Comparações dessa semana são provisórias."
+                if dias_provisorios else None
+            ),
         },
         'metrics': metrics,
         'evolucao': evo,
@@ -292,5 +308,5 @@ def download(
     return StreamingResponse(
         stream(),
         media_type='text/csv',
-        headers={'Content-Disposition': f'attachment; filename="resumo_{indicador}_{inicio_iso}_a_{fim_iso}_acima_{corte}.csv"'},
+        headers={'Content-Disposition': f'attachment; filename="resumo_{indicador}_{inicio_iso}_a_{fim_iso}_acima_{corte}{"_PROVISORIO" if "origem_dados" in df.columns and (df["origem_dados"] != "ORIGINAL").any() else ""}.csv"'},
     )
