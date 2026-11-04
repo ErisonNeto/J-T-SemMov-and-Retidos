@@ -13,8 +13,6 @@ services:
         sync: false
       - key: JT_API_CACHE_SECONDS
         value: '120'
-      - key: JT_PROXY_SEM_MOV_28
-        value: '1'
       - key: JT_HISTORY_DAYS
         value: '45'
       - key: JT_API_TIMEOUT
