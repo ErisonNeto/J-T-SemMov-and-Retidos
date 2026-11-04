@@ -217,19 +217,39 @@ def carregar_gestao(path: Path) -> Dict[str, dict]:
         raise ValueError(f"Colunas ausentes na Gestão: {faltantes}")
 
     mapa: Dict[str, dict] = {}
+    duplicados = set()
     for _, row in df.iterrows():
         codigo = norm_codigo(row.get("Estação No."))
-        if not codigo:
+        if not codigo or codigo.lower() in ("nan", "none"):
             continue
         coord = texto(row.get("Coordenador"))
         sup = texto(row.get("Supervisor"))
-        mapa[codigo] = {
+        responsavel = {
             "base_nome_gestao": texto(row.get("Nome da base")),
             "uf": texto(row.get("Estado(UF)")),
             "rm": texto(row.get("Responsável da Região")),
-            "sc": coord or sup,
+            # S/C representa a responsabilidade operacional da BASE:
+            # Supervisor prioritário; Coordenador apenas se não houver Supervisor.
+            "sc": sup or coord,
             "regional": texto(row.get("Regional")),
         }
+        anterior = mapa.get(codigo)
+        if anterior is not None:
+            duplicados.add(codigo)
+            campos = ("uf", "rm", "sc", "regional")
+            divergencias = [c for c in campos if normalizar(anterior.get(c)) != normalizar(responsavel.get(c))]
+            if divergencias:
+                raise ValueError(
+                    f"Gestão ambígua para a base {codigo}: cadastro duplicado com "
+                    f"diferenças em {', '.join(divergencias)}. Corrija a Gestão "
+                    "antes de importar ou publicar responsáveis."
+                )
+        mapa[codigo] = responsavel
+    if duplicados:
+        print(
+            f"  Gestão: {len(duplicados)} código(s) repetido(s) com "
+            "atribuição operacional consistente; normalizados por código."
+        )
     return mapa
 
 
