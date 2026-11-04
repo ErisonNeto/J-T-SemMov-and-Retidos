@@ -128,6 +128,26 @@ def aging_retidos(label: str) -> Optional[int]:
     return int(m.group(1)) if m else None
 
 
+def data_exportacao_nome(path: Path) -> Optional[date]:
+    """Lê a data do carimbo de 14 dígitos apenas para CONFERÊNCIA.
+
+    Ex.: ...33620020261104091316.xlsx foi exportado em 04/11/2026.
+    Essa não é necessariamente a data operacional do indicador.
+    """
+    nome = path.name
+    m = re.search(
+        r"(20\\d{2})(0[1-9]|1[0-2])(0[1-9]|[12]\\d|3[01])"
+        r"([01]\\d|2[0-3])([0-5]\\d)([0-5]\\d)(?!\\d)",
+        nome,
+    )
+    if m is None:
+        return None
+    try:
+        return date(int(m.group(1)), int(m.group(2)), int(m.group(3)))
+    except ValueError:
+        return None
+
+
 def data_explicita_do_nome(path: Path) -> Optional[date]:
     """Lê apenas datas que claramente fazem parte do nome lógico do arquivo.
 
@@ -852,8 +872,20 @@ def inferir_data_sem_mov_coluna_a(path: Path) -> Optional[date]:
     return data_encontrada
 
 
-def data_referencia(path: Path, indicador: str) -> date:
+def data_referencia(path: Path, indicador: str, data_forcada: Optional[date] = None) -> date:
+    """Descobre data operacional sem confundir com timestamp da exportação.
+
+    Para Sem Mov, a coluna A 'Data' é a principal evidência.
+    Para Retidos, usa a última movimentação efetiva quando não há data lógica.
+    --data-ref pode fixar a data do snapshot, respeitando essas evidências.
+    """
     explicita = data_explicita_do_nome(path)
+    exportacao = data_exportacao_nome(path)
+    if exportacao is not None and data_forcada is not None and data_forcada > exportacao:
+        raise ValueError(
+            f"{path.name}: data de referência {data_forcada} é posterior "
+            f"à exportação de {exportacao}; confira o arquivo."
+        )
     if indicador == "sem_mov":
         # Uma renomeação manual pode indicar um dia diferente do snapshot real.
         # Quando a coluna A é 'Data', sua referência deve concordar com o nome.
@@ -864,18 +896,65 @@ def data_referencia(path: Path, indicador: str) -> date:
                 f"mas a coluna A contém {data_da_coluna}. "
                 "Renomeie de acordo com a data operacional real; importação bloqueada."
             )
+        if data_forcada is not None:
+            if data_da_coluna is not None and data_forcada != data_da_coluna:
+                raise ValueError(
+                    f"DATA DIVERGENTE em {path.name}: --data-ref indica "
+                    f"{data_forcada}, mas a coluna A indica {data_da_coluna}."
+                )
+            if explicita is not None and data_forcada != explicita:
+                raise ValueError(
+                    f"DATA DIVERGENTE em {path.name}: --data-ref indica "
+                    f"{data_forcada}, mas o nome indica {explicita}."
+                )
+            return data_forcada
         if data_da_coluna is not None:
-            return data_da_coluna
-        if explicita is not None:
-            return explicita
-        raise ValueError(
-            f"{path.name}: a coluna A não contém uma data de referência confiável. "
-            "Confira o cabeçalho ou use uma data operacional comprovada no nome."
-        )
-    if explicita is not None:
-        return explicita
+            resultado = data_da_coluna
+        elif explicita is not None:
+            resultado = explicita
+        else:
+            raise ValueError(
+                f"{path.name}: sem data confiável de snapshot na coluna A. "
+                "Use --data-ref AAAA-MM-DD somente após confirmar a data operacional."
+            )
+        if exportacao is not None and resultado > exportacao:
+            raise ValueError(
+                f"DATA DIVERGENTE em {path.name}: data operacional {resultado} "
+                f"é posterior à exportação de {exportacao}."
+            )
+        return resultado
     if indicador == "retidos":
-        return inferir_data_retidos(path)
+        if explicita is not None:
+            if data_forcada is not None and data_forcada != explicita:
+                raise ValueError(
+                    f"DATA DIVERGENTE em {path.name}: --data-ref indica "
+                    f"{data_forcada}, mas o nome indica {explicita}."
+                )
+            return explicita
+        ultima_operacao = inferir_data_retidos(path)
+        if exportacao is not None and ultima_operacao > exportacao:
+            raise ValueError(
+                f"DATA DIVERGENTE em {path.name}: última operação "
+                f"{ultima_operacao} é posterior à exportação {exportacao}."
+            )
+        if data_forcada is not None:
+            if ultima_operacao > data_forcada:
+                raise ValueError(
+                    f"DATA DIVERGENTE em {path.name}: --data-ref indica "
+                    f"{data_forcada}, mas a última operação identificada "
+                    f"é de {ultima_operacao}."
+                )
+            print(
+                f"    Retidos: data de referência informada: {data_forcada} "
+                f"| última operação: {ultima_operacao} | {path.name}"
+            )
+            return data_forcada
+        print(
+            f"    Retidos: data INFERIDA pela última operação: {ultima_operacao} "
+            f"| exportação: {exportacao or 'não identificada'} | {path.name}. "
+            "Confirme a data no --dry-run antes de importar."
+        )
+        return ultima_operacao
     raise ValueError(f"Indicador não reconhecido: {indicador}")
 
 
@@ -886,7 +965,13 @@ def data_referencia(path: Path, indicador: str) -> date:
 def detectar_indicador(path: Path) -> str:
     nome = normalizar(path.stem)
 
-    # O nome do próprio arquivo é a evidência mais forte.
+    # Nomes originais das duas exportações J&T: não precisam ser renomeados.
+    if nome.startswith("monitoramento de movimentacao em tempo real"):
+        return "sem_mov"
+    if nome.startswith("estatistica de itens retidos na base"):
+        return "retidos"
+
+    # Compatibilidade com as exportações históricas renomeadas.
     if any(x in nome for x in ("retido", "retencao")):
         return "retidos"
     if any(x in nome for x in ("sem mov", "sem_mov", "movimentacao")):
@@ -1274,7 +1359,11 @@ def _parece_arquivo_gestao(path: Path) -> bool:
     return nome.startswith("gest") and "colaboradores" in nome
 
 
-def localizar_arquivos(fontes: list[str], gestao_path: Path) -> list[tuple[Path, str, date]]:
+def localizar_arquivos(
+    fontes: list[str],
+    gestao_path: Path,
+    data_forcada: Optional[date] = None,
+) -> list[tuple[Path, str, date]]:
     encontrados: dict[tuple[str, str, str], tuple[Path, str, date]] = {}
     gestao_real = gestao_path.resolve() if gestao_path.exists() else None
 
@@ -1287,7 +1376,7 @@ def localizar_arquivos(fontes: list[str], gestao_path: Path) -> list[tuple[Path,
             if path.name.startswith("~$"):
                 continue
             indicador = detectar_indicador(path)
-            data_ref = data_referencia(path, indicador)
+            data_ref = data_referencia(path, indicador, data_forcada=data_forcada)
             # Mesmo conteúdo pode aparecer solto e dentro de ZIP. Mantém um por nome/data/indicador.
             chave = (indicador, data_ref.isoformat(), path.name.lower())
             encontrados[chave] = (path, indicador, data_ref)
@@ -1338,6 +1427,19 @@ def parse_args() -> argparse.Namespace:
         help="Testa somente URL/chave da JT API e encerra, sem ler planilhas nem importar.",
     )
     parser.add_argument(
+        "--data-ref", "--data",
+        dest="data_ref",
+        metavar="AAAA-MM-DD",
+        help="Data operacional confirmada para arquivos de exportação com nome genérico; "
+             "não usa o timestamp de download como data do indicador.",
+    )
+    parser.add_argument(
+        "--lote",
+        type=int,
+        metavar="N",
+        help="Registros por envio à JT API (50 a 3000). Para evitar timeout, use 100 ou 250.",
+    )
+    parser.add_argument(
         "--strict",
         action="store_true",
         help="Interrompe no primeiro arquivo com erro. Sem esta opção, registra o erro e continua os demais.",
@@ -1347,6 +1449,19 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> None:
     args = parse_args()
+    global BATCH_SIZE
+    if args.lote is not None:
+        if not (50 <= args.lote <= 3000):
+            raise ValueError("--lote precisa ficar entre 50 e 3000.")
+        BATCH_SIZE = args.lote
+    data_forcada = None
+    if args.data_ref:
+        try:
+            data_forcada = date.fromisoformat(args.data_ref)
+        except ValueError as exc:
+            raise ValueError(
+                "--data-ref exige uma data válida no formato AAAA-MM-DD."
+            ) from exc
     gestao_path = Path(args.gestao).expanduser().resolve()
 
     if not API_URL and not args.dry_run:
@@ -1368,7 +1483,7 @@ def main() -> None:
     if not args.dry_run:
         print(f"Destino: {API_URL}/import")
 
-    arquivos = localizar_arquivos(args.fontes, gestao_path)
+    arquivos = localizar_arquivos(args.fontes, gestao_path, data_forcada=data_forcada)
     if not arquivos:
         print("Nenhum XLSX de SEM MOV/RETIDOS encontrado.")
         return
