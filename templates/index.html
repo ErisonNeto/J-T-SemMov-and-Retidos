@@ -89,6 +89,19 @@
       </article>
     </section>
 
+    <section class="panel" aria-label="Conferência diária de remessas por Aging">
+      <div class="panel-title"><div><span class="section-kicker">CONFERÊNCIA COM PLANILHA</span>
+        <h3>Retrato diário de remessas <span id="snapshotDate">—</span></h3>
+        <p>Contagem de remessas no dia final selecionado, por 1, 2, 3, 4 e mais de 4 dias. Não confundir com os pedidos acumulados na semana.</p>
+      </div></div>
+      <div class="table-wrap"><table><thead><tr>
+        <th>Base</th><th>S/C</th><th>1 dia</th><th>2 dias</th><th>3 dias</th>
+        <th>4 dias</th><th>5+ dias</th><th>Total remessas</th><th>&gt;3 dias</th>
+      </tr></thead><tbody id="snapshotBody"></tbody>
+      <tfoot id="snapshotFoot"></tfoot></table></div>
+      <p class="metric-note" id="snapshotNote">É preciso usar a mesma data e o mesmo conjunto de bases da planilha para comparar.</p>
+    </section>
+
     <section class="grid-2">
       <article class="panel chart-panel">
         <div class="panel-title"><div><span class="section-kicker">TENDÊNCIA</span>
@@ -110,6 +123,6 @@
   </main>
 
   <div id="toast" class="toast"></div>
-  <script src="/static/app.js?v=20261104-gestao-filtros"></script>
+  <script src="/static/app.js?v=20261104-conferencia-diaria"></script>
 </body>
 </html>
