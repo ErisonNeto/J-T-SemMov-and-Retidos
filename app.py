@@ -305,8 +305,13 @@ def download(
             yield buf.getvalue()
             buf.seek(0); buf.truncate(0)
 
+    provisorio = (
+        "origem_dados" in df.columns
+        and bool((df["origem_dados"] != "ORIGINAL").any())
+    )
+    sufixo = "_PROVISORIO" if provisorio else ""
     return StreamingResponse(
         stream(),
         media_type='text/csv',
-        headers={'Content-Disposition': f'attachment; filename="resumo_{indicador}_{inicio_iso}_a_{fim_iso}_acima_{corte}{"_PROVISORIO" if "origem_dados" in df.columns and (df["origem_dados"] != "ORIGINAL").any() else ""}.csv"'},
+        headers={'Content-Disposition': f'attachment; filename="resumo_{indicador}_{inicio_iso}_a_{fim_iso}_acima_{corte}{sufixo}.csv"'},
     )
