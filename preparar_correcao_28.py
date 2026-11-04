@@ -27,6 +27,29 @@ TOTAL_PREVISTO = 42473
 PEDIDOS_PREVISTOS = 58978
 
 
+def extrair_registro(row):
+    """Normaliza resposta de /query: dicionário, tupla [json] ou JSON serializado."""
+    if isinstance(row, dict):
+        if "remessa" in row and "base_codigo" in row:
+            return row
+        if "registro" in row:
+            return extrair_registro(row["registro"])
+        if len(row) == 1:
+            return extrair_registro(next(iter(row.values())))
+    if isinstance(row, (list, tuple)) and len(row) == 1:
+        return extrair_registro(row[0])
+    if isinstance(row, str):
+        try:
+            return extrair_registro(json.loads(row))
+        except (ValueError, TypeError) as exc:
+            raise RuntimeError("Resposta da API contém JSON inválido.") from exc
+    raise RuntimeError(
+        "Formato de linha desconhecido na resposta da JT API: "
+        f"tipo={type(row).__name__}, "
+        f"campos={list(row)[:8] if isinstance(row, dict) else 'não informado'}."
+    )
+
+
 def normalizar_chave(row):
     return (core.texto(row.get("remessa")), core.norm_codigo(row.get("base_codigo")))
 
@@ -49,7 +72,7 @@ def gerar_sql_remocao(remessas):
 -- Precisa executar NO POSTGRESQL de origem da JT API (psql/pgAdmin),
 -- em transação, após todas as outras importações terminarem.
 -- Exclui apenas os 18 registros identificados; nenhuma outra data ou Retidos.
-\\set ON_ERROR_STOP on
+\set ON_ERROR_STOP on
 BEGIN;
 SET LOCAL lock_timeout = '5s';
 SET LOCAL statement_timeout = '60s';
@@ -98,15 +121,28 @@ def run():
                 "Nenhuma limpeza deve ser preparada sem revisar os novos registros."
             )
 
-        rows = consulta(
+        # A JT API pode retornar tuplas em vez de dicionários. Usamos
+        # row_to_json(t) para recuperar o registro completo com os nomes
+        # das colunas, independentemente da forma de serialização de /query.
+        retorno = consulta(
             s,
-            """SELECT * FROM public.sem_mov_retidos_detalhe
-               WHERE indicador = %s AND data = %s::date
-               ORDER BY remessa, base_codigo""",
+            """SELECT row_to_json(t) AS registro
+               FROM (
+                 SELECT *
+                 FROM public.sem_mov_retidos_detalhe
+                 WHERE indicador = %s AND data = %s::date
+                 ORDER BY remessa, base_codigo
+               ) AS t""",
             ["sem_mov", DIA],
         )
-        if len(rows) != 18 or not all(isinstance(x, dict) for x in rows):
-            raise RuntimeError("Consulta não retornou exatamente 18 objetos completos.")
+        if len(retorno) != 18:
+            raise RuntimeError(
+                f"A JT API retornou {len(retorno)} linhas; eram esperadas 18. "
+                "Nenhum dado foi alterado."
+            )
+        rows = [extrair_registro(x) for x in retorno]
+        if not all(isinstance(x, dict) and "remessa" in x and "base_codigo" in x for x in rows):
+            raise RuntimeError("Resposta não contém registros completos para backup.")
         keys = [normalizar_chave(x) for x in rows]
         if len(set(keys)) != 18:
             raise RuntimeError("As 18 chaves não são únicas. Parando.")
