@@ -207,6 +207,13 @@ def data_explicita_do_nome(path: Path) -> Optional[date]:
 # -----------------------------------------------------------------------------
 
 def carregar_gestao(path: Path) -> Dict[str, dict]:
+    """Carrega TODAS as bases por código, sem inventar responsáveis ambíguos.
+
+    S/C = Supervisor ou Coordenador se Supervisor estiver vazio.
+    Quando houver duplicidade contraditória, preserva somente os campos
+    consensuais e deixa em branco o campo sem confirmação (ex.: R/M 961606).
+    A publicação da dimensão é mais rigorosa e exige --pular-conflitos.
+    """
     if not path.exists():
         raise FileNotFoundError(f"Gestão de colaboradores não encontrada: {path}")
 
@@ -216,42 +223,48 @@ def carregar_gestao(path: Path) -> Dict[str, dict]:
     if faltantes:
         raise ValueError(f"Colunas ausentes na Gestão: {faltantes}")
 
-    mapa: Dict[str, dict] = {}
-    duplicados = set()
+    grupos: Dict[str, list[dict]] = {}
     for _, row in df.iterrows():
         codigo = norm_codigo(row.get("Estação No."))
         if not codigo or codigo.lower() in ("nan", "none"):
             continue
         coord = texto(row.get("Coordenador"))
         sup = texto(row.get("Supervisor"))
-        responsavel = {
+        grupos.setdefault(codigo, []).append({
             "base_nome_gestao": texto(row.get("Nome da base")),
             "uf": texto(row.get("Estado(UF)")),
             "rm": texto(row.get("Responsável da Região")),
-            # S/C representa a responsabilidade operacional da BASE:
-            # Supervisor prioritário; Coordenador apenas se não houver Supervisor.
             "sc": sup or coord,
             "regional": texto(row.get("Regional")),
-        }
-        anterior = mapa.get(codigo)
-        if anterior is not None:
-            duplicados.add(codigo)
-            campos = ("uf", "rm", "sc", "regional")
-            divergencias = [c for c in campos if normalizar(anterior.get(c)) != normalizar(responsavel.get(c))]
-            if divergencias:
-                raise ValueError(
-                    f"Gestão ambígua para a base {codigo}: cadastro duplicado com "
-                    f"diferenças em {', '.join(divergencias)}. Corrija a Gestão "
-                    "antes de importar ou publicar responsáveis."
-                )
-        mapa[codigo] = responsavel
+        })
+
+    mapa: Dict[str, dict] = {}
+    duplicados = 0
+    ambiguos: Dict[str, list[str]] = {}
+    campos = ("base_nome_gestao", "uf", "rm", "sc", "regional")
+    for codigo, opcoes in grupos.items():
+        if len(opcoes) > 1:
+            duplicados += 1
+        escolhido = {}
+        for campo in campos:
+            valores = [item.get(campo, "") for item in opcoes if texto(item.get(campo))]
+            diferentes = {normalizar(v) for v in valores}
+            if len(diferentes) > 1:
+                escolhido[campo] = ""
+                ambiguos.setdefault(codigo, []).append(campo)
+            else:
+                escolhido[campo] = valores[0] if valores else ""
+        mapa[codigo] = escolhido
     if duplicados:
+        print(f"  Gestão: {duplicados} códigos repetidos, consolidados por código.", flush=True)
+    for codigo, campos_conflitantes in sorted(ambiguos.items()):
         print(
-            f"  Gestão: {len(duplicados)} código(s) repetido(s) com "
-            "atribuição operacional consistente; normalizados por código."
+            f"  ATENÇÃO Gestão {codigo}: divergência em "
+            f"{', '.join(campos_conflitantes)}. "
+            "Campo(s) indefinido(s) ficaram vazios; confirmar responsável.",
+            flush=True,
         )
     return mapa
-
 
 # -----------------------------------------------------------------------------
 # Leitura XLSX por XML (streaming)
