@@ -92,30 +92,91 @@ def _dataframe_da_resposta(payload: Any) -> pd.DataFrame:
 
 def _consultar_resumo() -> pd.DataFrame:
     inicio = (datetime.now(TIMEZONE).date() - timedelta(days=_HISTORY_DAYS)).isoformat()
-    sql = """
-        SELECT
-            indicador,
-            data::text AS data,
-            COALESCE(base_codigo, '') AS base_codigo,
-            COALESCE(base_nome, '') AS base_nome,
-            COALESCE(uf, '') AS uf,
-            COALESCE(rm, '') AS rm,
-            COALESCE(sc, '') AS sc,
-            COALESCE(regional, '') AS regional,
-            COALESCE(aging_label, '') AS aging_label,
-            COALESCE(aging_valor, 0)::int AS aging_valor,
-            COALESCE(acima_3, 0)::int AS acima_3,
-            COALESCE(acima_10, 0)::int AS acima_10,
-            COALESCE(motivo, '') AS motivo,
-            SUM(COALESCE(pedidos, 0))::bigint AS pedidos,
-            COUNT(*)::bigint AS linhas
-        FROM public.sem_mov_retidos_detalhe
-        WHERE data >= %s::date
-        GROUP BY
-            indicador, data, base_codigo, base_nome, uf, rm, sc, regional,
-            aging_label, aging_valor, acima_3, acima_10, motivo
-        ORDER BY data, indicador, base_nome, aging_valor
-    """
+    # Usa a Gestão publicada como dimensão única, por código de base. Isso
+    # corrige a atribuição de R/M, S/C, UF e nome em todos os períodos,
+    # sem reimportar/editar milhões de remessas históricas.
+    # Antes da primeira publicação, permanece no modo legado.
+    gestao_ativa = False
+    try:
+        conf = requests.post(
+            f"{_API_URL}/query",
+            headers=_headers(),
+            json={
+                "sql": """
+                    SELECT COUNT(*)::int AS qtd
+                    FROM public.jt_gestao_bases
+                """,
+                "params": [],
+            },
+            timeout=_TIMEOUT,
+        )
+        if conf.ok:
+            x = _extrair_linhas(conf.json())
+            if x:
+                qtd = int(x[0]["qtd"] if isinstance(x[0], dict) else x[0][0])
+                gestao_ativa = qtd >= 500
+                if 0 < qtd < 500:
+                    _status["aviso"] = (
+                        f"Tabela de Gestão parcialmente publicada ({qtd} códigos). "
+                        "Mantendo os responsáveis gravados nas remessas até completar."
+                    )
+        elif conf.status_code not in (400, 404, 422):
+            raise RuntimeError(
+                f"Falha ao consultar dimensão Gestão: HTTP {conf.status_code}"
+            )
+    except requests.exceptions.RequestException as exc:
+        raise RuntimeError(f"Falha na consulta da Gestão: {exc}") from exc
+
+    if gestao_ativa:
+        sql = """
+            SELECT
+                d.indicador,
+                d.data::text AS data,
+                COALESCE(d.base_codigo,'') AS base_codigo,
+                COALESCE(NULLIF(g.base_nome,''),d.base_nome,'') AS base_nome,
+                COALESCE(NULLIF(g.uf,''),d.uf,'') AS uf,
+                COALESCE(NULLIF(g.rm,''),d.rm,'') AS rm,
+                COALESCE(NULLIF(g.sc,''),d.sc,'') AS sc,
+                COALESCE(NULLIF(g.regional,''),d.regional,'') AS regional,
+                COALESCE(d.aging_label,'') AS aging_label,
+                COALESCE(d.aging_valor,0)::int AS aging_valor,
+                COALESCE(d.acima_3,0)::int AS acima_3,
+                COALESCE(d.acima_10,0)::int AS acima_10,
+                COALESCE(d.motivo,'') AS motivo,
+                SUM(COALESCE(d.pedidos,0))::bigint AS pedidos,
+                COUNT(*)::bigint AS linhas
+            FROM public.sem_mov_retidos_detalhe AS d
+            LEFT JOIN public.jt_gestao_bases AS g
+              ON d.base_codigo = g.base_codigo
+            WHERE d.data >= %s::date
+            GROUP BY 1,2,3,4,5,6,7,8,9,10,11,12,13
+            ORDER BY 2,1,4,10
+        """
+    else:
+        sql = """
+            SELECT
+                indicador,
+                data::text AS data,
+                COALESCE(base_codigo, '') AS base_codigo,
+                COALESCE(base_nome, '') AS base_nome,
+                COALESCE(uf, '') AS uf,
+                COALESCE(rm, '') AS rm,
+                COALESCE(sc, '') AS sc,
+                COALESCE(regional, '') AS regional,
+                COALESCE(aging_label, '') AS aging_label,
+                COALESCE(aging_valor, 0)::int AS aging_valor,
+                COALESCE(acima_3, 0)::int AS acima_3,
+                COALESCE(acima_10, 0)::int AS acima_10,
+                COALESCE(motivo, '') AS motivo,
+                SUM(COALESCE(pedidos, 0))::bigint AS pedidos,
+                COUNT(*)::bigint AS linhas
+            FROM public.sem_mov_retidos_detalhe
+            WHERE data >= %s::date
+            GROUP BY
+                indicador, data, base_codigo, base_nome, uf, rm, sc, regional,
+                aging_label, aging_valor, acima_3, acima_10, motivo
+            ORDER BY data, indicador, base_nome, aging_valor
+        """
     resp = requests.post(
         f"{_API_URL}/query",
         headers=_headers(),
@@ -128,6 +189,10 @@ def _consultar_resumo() -> pd.DataFrame:
         )
 
     df = _dataframe_da_resposta(resp.json())
+    _status["fonte"] = (
+        "PostgreSQL via JT API + Gestão de colaboradores"
+        if gestao_ativa else "PostgreSQL via JT API"
+    )
     if df.empty:
         return df
 
