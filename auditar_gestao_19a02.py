@@ -249,10 +249,14 @@ def status_sc(banco_sc, g):
     b, esperado = normal(banco_sc), normal(g["sc_atual"])
     if b == esperado:
         return "OK"
-    if b and b == normal(g["supervisor"]) and normal(g["coordenador"]):
-        return "BANCO_SUPERVISOR_GESTAO_PRIORIZA_COORDENADOR"
-    if b and b == normal(g["coordenador"]) and not esperado:
-        return "BANCO_COORDENADOR_GESTAO_VAZIA"
+    if (
+        b and b == normal(g["coordenador"])
+        and normal(g["supervisor"])
+        and normal(g["coordenador"]) != normal(g["supervisor"])
+    ):
+        return "BANCO_COORDENADOR_GESTAO_PRIORIZA_SUPERVISOR"
+    if b and b == normal(g["supervisor"]) and not esperado:
+        return "BANCO_SUPERVISOR_GESTAO_VAZIA"
     if not b and esperado:
         return "SC_VAZIO_NO_BANCO"
     return "SC_DIVERGENTE"
