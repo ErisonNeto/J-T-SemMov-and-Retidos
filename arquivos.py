@@ -31,13 +31,6 @@ _HISTORY_DAYS = max(
     int(os.getenv("JT_HISTORY_DAYS", "45")),
 )
 
-# Ativação explícita no Render: o dia 28/10 usa somente uma cópia
-# em memória do RESUMO de 30/10, e jamais é gravado como dado original.
-_PROXY_SEM_MOV_28 = os.getenv("JT_PROXY_SEM_MOV_28", "0").strip().lower() in ("1", "true", "sim", "yes")
-_PROXY_DIA = "2026-10-28"
-_PROXY_ORIGEM = "2026-10-30"
-_ORIGEM_PROVISORIA = "PROVISORIO: copia dos dados de 30/10/2026 para 28/10/2026"
-
 _lock = threading.Lock()
 _cache_df: pd.DataFrame | None = None
 _cache_until = 0.0
@@ -150,37 +143,6 @@ def _consultar_resumo() -> pd.DataFrame:
     return df
 
 
-def _aplicar_proxy_28(df: pd.DataFrame) -> pd.DataFrame:
-    """Usa 30/10 como proxy *somente em memória*, com rastro de origem.
-
-    Não mascara uma carga verdadeira já iniciada. Se o dia 28 possuir outros
-    dados além dos 18 registros vazios conhecidos, preserva-os sem espelhar.
-    """
-    df = df.copy()
-    df["origem_dados"] = "ORIGINAL"
-    if not _PROXY_SEM_MOV_28 or df.empty:
-        return df
-    de28 = (df["indicador"] == "sem_mov") & (df["data"] == _PROXY_DIA)
-    existentes = df.loc[de28]
-    legado_18 = (
-        int(existentes["linhas"].sum()) == 18
-        and int(existentes["pedidos"].sum()) == 0
-        and set(existentes["base_codigo"].astype(str)) == {"89101"}
-    )
-    if not existentes.empty and not legado_18:
-        # Uma carga real no dia 28 começou: não substitua por proxy.
-        return df
-    origem = df.loc[
-        (df["indicador"] == "sem_mov") & (df["data"] == _PROXY_ORIGEM)
-    ]
-    if origem.empty:
-        return df
-    estimado = origem.copy()
-    estimado["data"] = _PROXY_DIA
-    estimado["origem_dados"] = _ORIGEM_PROVISORIA
-    return pd.concat([df.loc[~de28], estimado], ignore_index=True)
-
-
 def carregar() -> pd.DataFrame:
     """Carrega um snapshot agregado com cache curto para não repetir a query por endpoint."""
     global _cache_df, _cache_until
@@ -193,7 +155,7 @@ def carregar() -> pd.DataFrame:
         if _cache_df is not None and agora < _cache_until:
             return _cache_df.copy()
         try:
-            novo = _aplicar_proxy_28(_consultar_resumo())
+            novo = _consultar_resumo()
             _cache_df = novo
             _cache_until = time.monotonic() + _CACHE_SECONDS
             _status["sincronizado_em"] = datetime.now(TIMEZONE).isoformat()
