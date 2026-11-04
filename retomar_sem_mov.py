@@ -92,6 +92,8 @@ def run():
                     help="Registros por requisição (padrão: 250).")
     ap.add_argument("--verificar", action="store_true",
                     help="Confere o banco e o arquivo sem enviar registros.")
+    ap.add_argument("--data-ref", "--data",
+                    help="Data operacional confirmada (AAAA-MM-DD) quando o nome for genérico.")
     args = ap.parse_args()
     if not (50 <= args.lote <= 1000):
         ap.error("--lote deve ficar entre 50 e 1000.")
@@ -103,7 +105,15 @@ def run():
     indicador = core.detectar_indicador(path)
     if indicador != "sem_mov":
         ap.error("Este script aceita somente arquivos SEM MOV.")
-    dia = core.data_referencia(path, "sem_mov").isoformat()
+    data_forcada = None
+    if args.data_ref:
+        try:
+            data_forcada = core.date.fromisoformat(args.data_ref)
+        except ValueError as exc:
+            raise RuntimeError(
+                "--data-ref deve seguir AAAA-MM-DD."
+            ) from exc
+    dia = core.data_referencia(path, "sem_mov", data_forcada=data_forcada).isoformat()
     gestao = core.carregar_gestao(core.GESTAO_PADRAO)
     print(f"Arquivo: {path.name} | dia: {dia} | Gestão: {len(gestao)} códigos", flush=True)
 
