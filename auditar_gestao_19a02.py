@@ -108,7 +108,7 @@ def ler_gestao(path):
             "supervisor": strvalor(r.get("Supervisor")),
         }
         # Reproduz exatamente a regra do importador: Coordenador ou Supervisor.
-        c["sc_atual"] = c["coordenador"] or c["supervisor"]
+        c["sc_atual"] = c["supervisor"] or c["coordenador"]
         por_codigo[codigo].append(c)
 
     escolhidos = {codigo: lista[-1] for codigo, lista in por_codigo.items()}
@@ -331,48 +331,60 @@ def relatorio(rows, gestao, conflitantes, dia_analisados):
                 f" | sem Gestão={c['sem_gestao_grupos']}"
             )
 
-    esperado_johan = sorted(
-        [
-            (codigo, g) for codigo, g in gestao.items()
-            if CHAVE_JOHAN in normal(g["coordenador"])
-               or CHAVE_JOHAN in normal(g["supervisor"])
-               or CHAVE_JOHAN in normal(g["sc_atual"])
-        ],
-        key=lambda p: p[0],
-    )
-    print("\nBASES DO JOHAN NA GESTÃO (Coordenador / Supervisor):")
-    if not esperado_johan:
-        print("  Johan não consta nas colunas Coordenador/Supervisor da Gestão escolhida.")
-    for codigo, g in esperado_johan:
+
+    # Relatório de TODAS as bases: não se limita a nenhum S/C.
+    responsaveis = defaultdict(lambda: {"codigos": set(), "registros": 0,
+                                        "pedidos": 0, "acima_3": 0, "acima_10": 0})
+    desvios = defaultdict(lambda: {"dias": set(), "indicadores": set(), "registros": 0,
+                                  "pedidos": 0, "sc_banco": set(), "sc_correto": set(),
+                                  "status": set()})
+    for codigo, g in gestao.items():
+        responsaveis[g["sc_atual"] or "(SEM RESPONSÁVEL)"]["codigos"].add(codigo)
+    for r in rows:
+        sc = r["sc_gestao_regra_atual"] or "(SEM RESPONSÁVEL)"
+        o = responsaveis[sc]
+        for k in ("registros", "pedidos", "acima_3", "acima_10"):
+            o[k] += r[k]
+        if r["status_sc"] != "OK" or r["status_rm"] != "OK" or r["status_uf"] != "OK":
+            cod = r["base_codigo"]
+            x = desvios[cod]
+            x["dias"].add(r["data"])
+            x["indicadores"].add(r["indicador"])
+            x["registros"] += r["registros"]
+            x["pedidos"] += r["pedidos"]
+            x["sc_banco"].add(r["sc_banco"])
+            x["sc_correto"].add(r["sc_gestao_regra_atual"])
+            x["status"].add(r["status_sc"])
+            x["status"].add(r["status_rm"])
+            x["status"].add(r["status_uf"])
+
+    print("\nTODOS OS RESPONSÁVEIS S/C — por base da Gestão e registros entre 19/10 e 02/11:")
+    for sc, x in sorted(responsaveis.items(), key=lambda kv: -kv[1]["registros"]):
         print(
-            f"  {codigo:<10} {g['base_nome'][:32]:<32} "
-            f"coord={g['coordenador'][:34]:<34} | supervisor={g['supervisor'][:34]}"
+            f"  {sc[:43]:<43} | bases={len(x['codigos']):>4}"
+            f" | registros={x['registros']:>10,} | pedidos={x['pedidos']:>10,}"
+            f" | >3d={x['acima_3']:>8,} | >10d={x['acima_10']:>8,}"
         )
 
-    filtrar_johan = [
-        r for r in rows
-        if CHAVE_JOHAN in normal(r["sc_banco"])
-        or CHAVE_JOHAN in normal(r["coordenador_gestao"])
-        or CHAVE_JOHAN in normal(r["supervisor_gestao"])
-    ]
-    por_base = defaultdict(lambda: {"registros": 0, "pedidos": 0, "acima_3": 0,
-                                    "acima_10": 0, "sc_bd": set(), "status": set(), "datas": set()})
-    for r in filtrar_johan:
-        x = por_base[r["base_codigo"]]
-        for key in ("registros", "pedidos", "acima_3", "acima_10"):
-            x[key] += r[key]
-        x["sc_bd"].add(r["sc_banco"])
-        x["status"].add(r["status_sc"])
-        x["datas"].add(r["data"])
-    print("\nJOHAN: BASES COM REGISTROS DE 19/10 A 02/11")
-    if not por_base:
-        print("  Nenhuma ocorrência do Johan na Gestão selecionada ou no banco para o intervalo.")
-    for cod, x in sorted(por_base.items(), key=lambda kv: -kv[1]["acima_3"]):
+    print(f"\nTODAS AS BASES COM ATRIBUIÇÃO DIVERGENTE: {len(desvios)}")
+    for codigo, x in sorted(desvios.items(), key=lambda kv: -kv[1]["registros"]):
         print(
-            f"  {cod:<10} >3d={x['acima_3']:>8,}  >10d={x['acima_10']:>8,}"
-            f"  reg={x['registros']:>8,}  S/C banco={','.join(sorted(x['sc_bd']))[:75]}"
-            f"  status={','.join(sorted(x['status']))}"
+            f"  {codigo:<11} reg={x['registros']:>9,} "
+            f" | banco={','.join(sorted(x['sc_banco']))[:45]}"
+            f" | Gestão={','.join(sorted(x['sc_correto']))[:45]}"
+            f" | dias={len(x['dias']):>2} | tipos={','.join(sorted(x['status']))}"
         )
+
+    print("\nCADASTROS COM COORDENADOR E SUPERVISOR DIFERENTES:")
+    for codigo, g in sorted(gestao.items()):
+        if (
+            g["coordenador"] and g["supervisor"]
+            and normal(g["coordenador"]) != normal(g["supervisor"])
+        ):
+            print(
+                f"  {codigo:<10} {g['base_nome'][:27]:<27}"
+                f" Coordenador={g['coordenador'][:38]} | Supervisor={g['supervisor'][:38]}"
+            )
     print(f"\nCódigos duplicados com conflito na Gestão: {len(conflitantes)}")
     for cod, lista in sorted(conflitantes.items()):
         print(f"  {cod}: " + " | ".join(f"{x['coordenador']}/{x['supervisor']}" for x in lista)[:140])
@@ -440,7 +452,7 @@ def main():
     print(f"GESTÃO: {gestao_path.name} | {len(gestao)} códigos únicos "
           f"| {sum(len(v)-1 for v in todas.values())} códigos repetidos "
           f"| {len(conflitos)} com conflito de atribuição")
-    print("Regra atual do importador: S/C = Coordenador, ou Supervisor quando Coordenador vazio")
+    print("Regra padronizada: S/C = Supervisor, ou Coordenador quando Supervisor vazio")
 
     destino = Path(__file__).resolve().parent / "auditoria_gestao_19a02"
     destino.mkdir(exist_ok=True)
@@ -469,12 +481,12 @@ def main():
             dados.extend(resumo)
             analisados.append(dia.isoformat())
             csv_out(destino / "todos_os_dias_e_bases.csv", dados)
-            johan = [r for r in dados if (
-                CHAVE_JOHAN in normal(r["sc_banco"]) or
-                CHAVE_JOHAN in normal(r["coordenador_gestao"]) or
-                CHAVE_JOHAN in normal(r["supervisor_gestao"])
-            )]
-            csv_out(destino / "somente_johan.csv", johan)
+            divergentes = [
+                r for r in dados
+                if (r["status_sc"] != "OK" or r["status_rm"] != "OK"
+                    or r["status_uf"] != "OK")
+            ]
+            csv_out(destino / "todas_as_divergencias.csv", divergentes)
             count = sum(x["registros"] for x in resumo)
             diverg = sum(x["registros"] for x in resumo if x["status_sc"] != "OK")
             print(
@@ -485,7 +497,7 @@ def main():
 
     relatorio(dados, gestao, conflitos, analisados)
     print(f"\nCSV completo: {destino / 'todos_os_dias_e_bases.csv'}")
-    print(f"CSV Johan: {destino / 'somente_johan.csv'}")
+    print(f"CSV com todas as divergências: {destino / 'todas_as_divergencias.csv'}")
     print("Nenhum dado foi modificado no PostgreSQL.")
     if args.dashboard_url:
         teste_dashboard(args.dashboard_url, gestao)
