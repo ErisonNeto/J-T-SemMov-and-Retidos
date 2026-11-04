@@ -51,7 +51,7 @@ def query(s, sql, params=None):
     raise RuntimeError("Formato de resposta inesperado na consulta da JT API")
 
 
-def organizar_gestao(path):
+def organizar_gestao(path, pular_conflitos=False):
     df = pd.read_excel(path, dtype=str)
     required = [
         "Estação No.", "Nome da base", "Estado(UF)",
@@ -88,27 +88,33 @@ def organizar_gestao(path):
             divergencias[codigo] = arr
 
     if divergencias:
-        for codigo, arr in divergencias.items():
+        for codigo, arr in sorted(divergencias.items()):
+            situacao = "PENDENTE" if pular_conflitos else "ERRO"
             print(
-                f"  ERRO: base {codigo} possui atribuições conflitantes: "
+                f"  {situacao}: base {codigo} possui atribuições conflitantes: "
                 + " / ".join(f"{x['rm']} | {x['sc']} | {x['uf']}" for x in arr),
                 flush=True,
             )
-        raise RuntimeError(
-            f"{len(divergencias)} código(s) de base com responsáveis contraditórios. "
-            "Corrija o arquivo Gestão antes de publicar."
-        )
+        if not pular_conflitos:
+            raise RuntimeError(
+                f"{len(divergencias)} código(s) de base com responsáveis contraditórios. "
+                "Corrija o arquivo Gestão ou execute com --pular-conflitos "
+                "para publicar somente os códigos sem divergência."
+            )
 
     # Preferir nome completo quando cadastro de código repetido tiver campo vazio.
+    # NUNCA eleger arbitrariamente uma das linhas com R/M divergente.
     dados = []
     for codigo, arr in sorted(por_codigo.items()):
+        if codigo in divergencias:
+            continue
         escolhido = dict(arr[-1])
         for campo in ("base_nome", "uf", "rm", "sc", "regional", "coordenador", "supervisor"):
             if not escolhido[campo]:
                 escolhido[campo] = next((x[campo] for x in arr if x[campo]), "")
         dados.append(escolhido)
 
-    return dados, duplicados
+    return dados, duplicados, divergencias
 
 
 def tabela_existe(s):
@@ -162,6 +168,11 @@ def main():
     p.add_argument("--aplicar", action="store_true",
                    help="Autoriza criar/atualizar jt_gestao_bases via JT API")
     p.add_argument("--lote", type=int, default=100)
+    p.add_argument(
+        "--pular-conflitos", action="store_true",
+        help="Exclui SOMENTE códigos com atribuições contraditórias da publicação; "
+             "salva relatório e mantém esses códigos pendentes.",
+    )
     args = p.parse_args()
     if args.lote < 10 or args.lote > 200:
         p.error("--lote deve ficar entre 10 e 200")
@@ -169,13 +180,13 @@ def main():
     if not path.is_file():
         raise RuntimeError(f"Gestão não encontrada: {path}")
 
-    dados, duplicados = organizar_gestao(path)
+    dados, duplicados, divergencias = organizar_gestao(path, pular_conflitos=args.pular_conflitos)
     if not dados:
         raise RuntimeError("Nenhuma base com código válido na Gestão")
-    print(f"Gestão: {path.name} | {len(dados)} códigos únicos")
+    print(f"Gestão: {path.name} | {len(dados) + len(divergencias)} códigos únicos")
     print(
-        f"  Duplicados por código: {len(duplicados)} "
-        "(sem conflito no responsável operacional)", flush=True,
+        f"  Códigos aptos: {len(dados)} | código(s) duplicado(s): {len(duplicados)} "
+        f"| pendentes por conflito: {len(divergencias)}", flush=True,
     )
     sem_sc = [d["base_codigo"] for d in dados if not d["sc"]]
     sem_rm = [d["base_codigo"] for d in dados if not d["rm"]]
@@ -193,7 +204,20 @@ def main():
         writer = csv.DictWriter(f, fieldnames=CAMPOS, delimiter=";")
         writer.writeheader()
         writer.writerows(dados)
-    print(f"CSV com todos os responsáveis: {destino}")
+    print(f"CSV com todos os responsáveis aptos: {destino}")
+    # CSV auditável com TODAS as opções de cadastro para códigos irresolutos.
+    pendente = pasta / "gestao_bases_pendentes.csv"
+    with pendente.open("w", newline="", encoding="utf-8-sig") as f:
+        writer = csv.DictWriter(f, fieldnames=CAMPOS, delimiter=";")
+        writer.writeheader()
+        for codigo, alternativas in sorted(divergencias.items()):
+            writer.writerows(alternativas)
+    if divergencias:
+        print(
+            f"  PENDENTE: {', '.join(sorted(divergencias))} — nenhuma atribuição "
+            f"será publicada para esses códigos. Detalhes: {pendente}",
+            flush=True,
+        )
 
     with requests.Session() as session:
         core.testar_api(session)
@@ -204,8 +228,25 @@ def main():
         )
         if not args.aplicar:
             print("VALIDAÇÃO CONCLUÍDA: nenhum dado enviado ou modificado.")
-            print("Para publicar as 509 bases, execute novamente com --aplicar.")
+            if divergencias:
+                print(
+                    "Para publicar somente os códigos aptos, execute com "
+                    "--pular-conflitos --aplicar."
+                )
+            else:
+                print("Para publicar os códigos aptos, execute com --aplicar.")
             return
+
+        if divergencias and existe:
+            banco_atual = obter_banco(session)
+            pendentes_ja_publicados = set(divergencias).intersection(banco_atual)
+            if pendentes_ja_publicados:
+                raise RuntimeError(
+                    "A tabela de Gestão já contém código(s) conflitante(s): "
+                    + ", ".join(sorted(pendentes_ja_publicados))
+                    + ". Não é seguro manter atribuições antigas; "
+                      "corrija o cadastro e a dimensão antes de continuar."
+                )
 
         # Upsert SOMENTE na tabela de Gestão, nunca na tabela de remessas.
         for inicio in range(0, len(dados), args.lote):
@@ -234,7 +275,8 @@ def main():
         conferir(dados, banco)
         print(
             "PUBLICAÇÃO FINALIZADA. Tabela de remessas preservada. "
-            "Agora o dashboard pode usar essa Gestão como dimensão de responsáveis.",
+            f"Dashboard poderá usar {len(dados)} códigos sem ambiguidade. "
+            f"Pendentes: {', '.join(sorted(divergencias)) or 'nenhum'}.",
             flush=True,
         )
 
