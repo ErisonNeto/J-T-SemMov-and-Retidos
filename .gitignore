@@ -10,3 +10,6 @@ __pycache__/
 dados/
 *.json
 !planos_exemplo.json
+
+# Backups e scripts gerados localmente para correções do banco.
+.correcoes_locais/
