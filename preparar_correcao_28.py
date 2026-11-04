@@ -68,7 +68,7 @@ def gerar_sql_remocao(remessas):
         "                 AND COALESCE(pedidos, 0) = 0\n"
         f"                 AND remessa IN ({lista})"
     )
-    return f"""-- EXECUTAR SOMENTE APÓS AUTORIZAÇÃO E COM BACKUP CONFERIDO.
+    return rf"""-- EXECUTAR SOMENTE APÓS AUTORIZAÇÃO E COM BACKUP CONFERIDO.
 -- Precisa executar NO POSTGRESQL de origem da JT API (psql/pgAdmin),
 -- em transação, após todas as outras importações terminarem.
 -- Exclui apenas os 18 registros identificados; nenhuma outra data ou Retidos.
