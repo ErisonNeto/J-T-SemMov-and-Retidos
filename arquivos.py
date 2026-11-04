@@ -104,7 +104,8 @@ def _consultar_resumo() -> pd.DataFrame:
             json={
                 "sql": """
                     SELECT COUNT(*)::int AS qtd
-                    FROM public.jt_gestao_bases
+                    FROM information_schema.tables
+                    WHERE table_schema = 'public' AND table_name = 'jt_gestao_bases'
                 """,
                 "params": [],
             },
@@ -113,13 +114,29 @@ def _consultar_resumo() -> pd.DataFrame:
         if conf.ok:
             x = _extrair_linhas(conf.json())
             if x:
-                qtd = int(x[0]["qtd"] if isinstance(x[0], dict) else x[0][0])
-                gestao_ativa = qtd >= 500
-                if 0 < qtd < 500:
-                    _status["aviso"] = (
-                        f"Tabela de Gestão parcialmente publicada ({qtd} códigos). "
-                        "Mantendo os responsáveis gravados nas remessas até completar."
+                existe = int(x[0]["qtd"] if isinstance(x[0], dict) else x[0][0]) > 0
+                if existe:
+                    quantidade = requests.post(
+                        f"{_API_URL}/query",
+                        headers=_headers(),
+                        json={
+                            "sql": "SELECT COUNT(*)::int AS qtd FROM public.jt_gestao_bases",
+                            "params": [],
+                        },
+                        timeout=_TIMEOUT,
                     )
+                    quantidade.raise_for_status()
+                    linhas_gestao = _extrair_linhas(quantidade.json())
+                    qtd = int(
+                        linhas_gestao[0]["qtd"]
+                        if isinstance(linhas_gestao[0], dict) else linhas_gestao[0][0]
+                    )
+                    gestao_ativa = qtd >= 500
+                    if not gestao_ativa:
+                        _status["aviso"] = (
+                            f"Tabela de Gestão parcialmente publicada ({qtd} códigos). "
+                            "Usando responsáveis originais até concluir a publicação."
+                        )
         elif conf.status_code not in (400, 404, 422):
             raise RuntimeError(
                 f"Falha ao consultar dimensão Gestão: HTTP {conf.status_code}"
