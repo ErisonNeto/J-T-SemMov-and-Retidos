@@ -123,6 +123,55 @@ def ler_gestao(path):
     return escolhidos, por_codigo, conflitantes
 
 
+def comparar_gestoes(antiga, atual, destino):
+    linhas = []
+    for codigo in sorted(set(antiga) | set(atual)):
+        x = antiga.get(codigo) or {}
+        y = atual.get(codigo) or {}
+        campos = ("rm", "coordenador", "supervisor", "sc_atual", "uf")
+        if all(normal(x.get(c)) == normal(y.get(c)) for c in campos):
+            continue
+        linhas.append({
+            "base_codigo": codigo,
+            "base_nome_antiga": x.get("base_nome", ""),
+            "base_nome_atual": y.get("base_nome", ""),
+            "rm_antiga": x.get("rm", ""), "rm_atual": y.get("rm", ""),
+            "coordenador_antigo": x.get("coordenador", ""),
+            "coordenador_atual": y.get("coordenador", ""),
+            "supervisor_antigo": x.get("supervisor", ""),
+            "supervisor_atual": y.get("supervisor", ""),
+            "sc_antigo": x.get("sc_atual", ""),
+            "sc_atual": y.get("sc_atual", ""),
+            "uf_antiga": x.get("uf", ""),
+            "uf_atual": y.get("uf", ""),
+        })
+    campos = [
+        "base_codigo", "base_nome_antiga", "base_nome_atual",
+        "rm_antiga", "rm_atual", "coordenador_antigo", "coordenador_atual",
+        "supervisor_antigo", "supervisor_atual", "sc_antigo", "sc_atual",
+        "uf_antiga", "uf_atual",
+    ]
+    with (destino / "mudancas_entre_gestoes.csv").open(
+        "w", encoding="utf-8-sig", newline=""
+    ) as f:
+        wr = csv.DictWriter(f, fieldnames=campos, delimiter=";")
+        wr.writeheader()
+        wr.writerows(linhas)
+    print(f"\nCOMPARAÇÃO ENTRE GESTÕES: {len(linhas)} bases com alteração de atribuição")
+    johan = [
+        x for x in linhas
+        if any(CHAVE_JOHAN in normal(v) for k, v in x.items()
+               if "coordenador" in k or "supervisor" in k or k.startswith("sc_"))
+    ]
+    print(f"  Bases com Johan envolvido em mudança: {len(johan)}")
+    for x in johan:
+        print(
+            f"  {x['base_codigo']} | S/C antigo={x['sc_antigo'][:35]} "
+            f"| S/C atual={x['sc_atual'][:35]}"
+        )
+    print(f"  CSV das mudanças: {destino / 'mudancas_entre_gestoes.csv'}")
+
+
 def consulta_dia(session, dia, codigos):
     # Inclui bases vinculadas ao Orlean NO BANCO e bases presentes na Gestão.
     # Assim, divergências de RM não desaparecem do diagnóstico.
@@ -351,6 +400,8 @@ def main():
     p = argparse.ArgumentParser(description="Auditar bases e S/C da Gestão vs banco entre 19/10 e 02/11")
     p.add_argument("--gestao", default=str(core.GESTAO_PADRAO),
                    help="Caminho para a Gestão que deve servir de referência")
+    p.add_argument("--gestao-antiga", default="",
+                   help="Opcional: outra versão da Gestão para comparar mudanças de S/C")
     p.add_argument("--somente-gestao", action="store_true",
                    help="Lista as bases Johan da Gestão sem consultar a JT API")
     p.add_argument("--dashboard-url", default="",
@@ -366,12 +417,19 @@ def main():
           f"| {len(conflitos)} com conflito de atribuição")
     print("Regra atual do importador: S/C = Coordenador, ou Supervisor quando Coordenador vazio")
 
+    destino = Path(__file__).resolve().parent / "auditoria_gestao_19a02"
+    destino.mkdir(exist_ok=True)
+    if args.gestao_antiga:
+        antiga_path = Path(args.gestao_antiga).expanduser().resolve()
+        if not antiga_path.is_file():
+            raise RuntimeError(f"Gestão antiga não encontrada: {antiga_path}")
+        antiga, _, _ = ler_gestao(antiga_path)
+        comparar_gestoes(antiga, gestao, destino)
+
     if args.somente_gestao:
         relatorio([], gestao, conflitos, [])
         return
 
-    destino = Path(__file__).resolve().parent / "auditoria_gestao_19a02"
-    destino.mkdir(exist_ok=True)
     codigos = set(gestao)
     if not codigos:
         raise RuntimeError("Gestão vazia; auditoria abortada")
