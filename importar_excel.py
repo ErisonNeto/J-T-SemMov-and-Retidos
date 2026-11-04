@@ -550,6 +550,12 @@ def localizar_layout_sem_mov(path: Path) -> tuple[str, int, dict[str, str]]:
                         col = _col(cell.get("r", ""))
                         valor = _valor_cell(cell, strings)
                         campo = _campo_sem_mov_por_cabecalho(valor)
+                        # A data do snapshot só pode ser a coluna A intitulada
+                        # Data. Nos arquivos antigos existem outras colunas
+                        # Data (última operação, expedição etc.) que NÃO são
+                        # referência do relatório.
+                        if campo == "data_operacional" and col != "A":
+                            continue
                         if campo:
                             prioridade = _prioridade_coluna_sem_mov(campo, valor)
                             if prioridade > prioridades.get(campo, -1):
