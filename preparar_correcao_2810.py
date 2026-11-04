@@ -10,8 +10,8 @@ Execute o SQL gerado apenas depois de fazer backup do PostgreSQL.
 from __future__ import annotations
 
 import json
-import os
 import sys
+from collections import Counter
 from datetime import date
 from pathlib import Path
 
@@ -127,28 +127,71 @@ def main():
 
     with requests.Session() as sess:
         core.testar_api(sess)
-        rows = consulta(
+        # O endpoint /query pode devolver listas posicionais em vez de dicts.
+        # Consultamos a ordem REAL das colunas para preservar um backup completo.
+        columns_raw = consulta(
+            sess,
+            """SELECT column_name
+               FROM information_schema.columns
+               WHERE table_schema = 'public'
+                 AND table_name = 'sem_mov_retidos_detalhe'
+               ORDER BY ordinal_position""",
+        )
+        nomes = [
+            str(x["column_name"] if isinstance(x, dict) else x[0])
+            for x in columns_raw
+        ]
+        if not nomes or not {"remessa", "base_codigo", "pedidos", "rm", "indicador", "data"}.issubset(set(nomes)):
+            raise RuntimeError(
+                "Não consegui confirmar as colunas do banco. "
+                "Operação somente leitura encerrada."
+            )
+        linhas_banco = consulta(
             sess,
             f"""SELECT * FROM {TABELA}
                 WHERE indicador = %s AND data = %s::date
                 ORDER BY remessa""",
             ["sem_mov", DIA.isoformat()],
         )
+        rows = []
+        for rec in linhas_banco:
+            if isinstance(rec, dict):
+                rows.append(rec)
+            elif isinstance(rec, (tuple, list)) and len(rec) == len(nomes):
+                rows.append(dict(zip(nomes, rec)))
+            else:
+                raise RuntimeError(
+                    "Resposta do PostgreSQL não bate com o esquema. "
+                    "Nenhuma operação foi executada."
+                )
 
     if len(rows) != 18:
         raise RuntimeError(
             f"Banco tem {len(rows)} linhas de Sem Mov em 28/10; "
             "esperadas 18. Nenhum SQL foi gerado."
         )
-    if not all(
-        isinstance(r, dict)
-        and str(r.get("base_codigo") or "") == "89101"
-        and int(r.get("pedidos") or 0) == 0
-        and "ORLEAN" in str(r.get("rm") or "").upper()
-        and str(r.get("remessa") or "")
-        for r in rows
-    ):
-        raise RuntimeError("Uma ou mais linhas não correspondem ao padrão incorreto conhecido. Abortado.")
+    def codigo(valor):
+        return str(valor if valor is not None else "").strip()
+
+    checks = {
+        "base_89101": sum(codigo(r.get("base_codigo")) == "89101" for r in rows),
+        "pedidos_zero": sum(
+            str(r.get("pedidos") if r.get("pedidos") is not None else "0").strip()
+            in ("0", "0.0", "0.00") for r in rows
+        ),
+        "rm_orlean": sum("ORLEAN" in codigo(r.get("rm")).upper() for r in rows),
+        "remessa_preenchida": sum(bool(codigo(r.get("remessa"))) for r in rows),
+    }
+    print("Diagnóstico seguro das 18 linhas (sem expor remessas):")
+    print("  "+", ".join(f"{k}={v}/18" for k, v in checks.items()))
+    if any(v != 18 for v in checks.values()):
+        print("  Códigos de base presentes:", dict(Counter(codigo(r.get("base_codigo")) for r in rows)))
+        print("  Valores de pedidos:", dict(Counter(codigo(r.get("pedidos")) for r in rows)))
+        print("  Valores de R/M:", dict(Counter(codigo(r.get("rm")) for r in rows)))
+        raise RuntimeError(
+            "Conferência das 18 linhas não corresponde ao padrão esperado. "
+            "NÃO será gerado SQL de exclusão."
+        )
     if len({str(r["remessa"]) for r in rows}) != 18:
         raise RuntimeError("As 18 linhas não possuem remessas únicas; abortado.")
 
@@ -172,7 +215,8 @@ def main():
     with backup.open("x", encoding="utf-8") as f:
         json.dump(
             {"tabela": TABELA, "data": DIA.isoformat(),
-             "origem": "JT API /query somente leitura", "registros": rows},
+             "origem": "JT API /query somente leitura", "colunas": nomes,
+             "registros": rows},
             f, ensure_ascii=False, indent=2, default=str
         )
     with sql_file.open("x", encoding="utf-8") as f:
