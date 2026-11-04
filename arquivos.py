@@ -153,7 +153,7 @@ def _consultar_resumo() -> pd.DataFrame:
                 COALESCE(NULLIF(g.base_nome,''),d.base_nome,'') AS base_nome,
                 COALESCE(NULLIF(g.uf,''),d.uf,'') AS uf,
                 COALESCE(NULLIF(g.rm,''),d.rm,'') AS rm,
-                COALESCE(NULLIF(g.sc,''),d.sc,'') AS sc,
+                COALESCE(CASE WHEN g.base_codigo IS NOT NULL THEN g.sc ELSE d.sc END,'') AS sc,
                 COALESCE(NULLIF(g.regional,''),d.regional,'') AS regional,
                 COALESCE(d.aging_label,'') AS aging_label,
                 COALESCE(d.aging_valor,0)::int AS aging_valor,
