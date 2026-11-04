@@ -13,3 +13,6 @@ dados/
 
 # Backups e scripts gerados localmente para correções do banco.
 .correcoes_locais/
+
+# Relatórios de auditoria gerados localmente (bases e responsáveis).
+auditoria_gestao_19a02/
