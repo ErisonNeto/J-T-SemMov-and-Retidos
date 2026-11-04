@@ -102,7 +102,7 @@ def main():
     else:
         qtd, total_pedidos = 0, 0
 
-    print("\\nDIAGNÓSTICO DE 28/10 — SOMENTE LEITURA")
+    print("\nDIAGNÓSTICO DE 28/10 — SOMENTE LEITURA")
     if (qtd, total_pedidos) == (42491, 58978):
         print(
             "IMPORTAÇÃO DA PLANILHA CONCLUÍDA: 42.473 linhas corretas e "
