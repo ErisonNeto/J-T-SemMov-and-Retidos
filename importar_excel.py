@@ -940,7 +940,16 @@ def data_referencia(path: Path, indicador: str, data_forcada: Optional[date] = N
                     f"{data_forcada}, mas o nome indica {explicita}."
                 )
             return explicita
-        ultima_operacao = inferir_data_retidos(path)
+        try:
+            ultima_operacao = inferir_data_retidos(path)
+        except ValueError:
+            if data_forcada is None:
+                raise
+            print(
+                f"    Retidos: data informada por --data-ref: {data_forcada} "
+                f"| não foi possível inferir pelos horários | {path.name}"
+            )
+            return data_forcada
         if exportacao is not None and ultima_operacao > exportacao:
             raise ValueError(
                 f"DATA DIVERGENTE em {path.name}: última operação "
