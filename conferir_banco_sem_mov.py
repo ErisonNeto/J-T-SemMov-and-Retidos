@@ -90,7 +90,45 @@ def main():
         """)
         tabela("ATÉ 15 BASES DO DIA 28/10 NO BANCO", bases,
                ["base_codigo", "rm", "registros", "pedidos"])
-    print("\nNenhum registro foi alterado. NÃO importar o dia 28/10 até revisar este diagnóstico.")
+    # O aviso anterior era fixo e continuava mandando não importar mesmo
+    # depois de os 42.473 registros corretos terem sido gravados.
+    # Este diagnóstico é somente leitura; não modifica o PostgreSQL.
+    if resumo and isinstance(resumo[0], dict):
+        qtd = int(resumo[0].get("registros") or 0)
+        total_pedidos = int(resumo[0].get("pedidos") or 0)
+    elif resumo:
+        qtd = int(resumo[0][0] or 0)
+        total_pedidos = int(resumo[0][1] or 0)
+    else:
+        qtd, total_pedidos = 0, 0
+
+    print("\\nDIAGNÓSTICO DE 28/10 — SOMENTE LEITURA")
+    if (qtd, total_pedidos) == (42491, 58978):
+        print(
+            "IMPORTAÇÃO DA PLANILHA CONCLUÍDA: 42.473 linhas corretas e "
+            "58.978 pedidos. Existem 18 linhas antigas de zero pedidos "
+            "a remover posteriormente, com backup e SQL controlado. "
+            "NÃO REIMPORTAR 28/10."
+        )
+    elif (qtd, total_pedidos) == (42473, 58978):
+        print(
+            "CARGA COMPLETA: 42.473 registros e 58.978 pedidos. "
+            "Conferir a exclusão das 18 linhas no backup da auditoria."
+        )
+    elif (qtd, total_pedidos) == (18, 0):
+        print(
+            "SOMENTE 18 LINHAS ANTIGAS NO BANCO. "
+            "A planilha correta de 28/10 ainda não foi importada."
+        )
+    elif qtd == 0:
+        print("28/10 não possui registros no banco.")
+    else:
+        print(
+            f"ATENÇÃO: 28/10 possui {qtd:,} registros e {total_pedidos:,} "
+            "pedidos. Estado diferente dos marcos auditados. "
+            "Conferir antes de qualquer importação ou exclusão."
+        )
+    print("Nenhum registro foi alterado por esta conferência.")
 
 
 if __name__ == "__main__":
