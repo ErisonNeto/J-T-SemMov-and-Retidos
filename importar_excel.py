@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import csv
 import hashlib
 import os
 import re
@@ -1498,6 +1499,106 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
+
+def aplicar_sc_confirmado_no_postgres(session: requests.Session, gestao: Dict[str, dict]) -> None:
+    """Preserva correções manuais já publicadas quando o XLSX local está desatualizado.
+
+    O CSV é o plano de correção auditado criado por corrigir_johan_todo_banco.py.
+    Só esses códigos recebem o S/C da dimensão já confirmada na JT API.
+    O histórico bruto não é atualizado aqui, apenas os novos upserts.
+    """
+    plano = BASE_DIR / "auditoria_gestao_19a02" / "correcao_johan_11_bases.csv"
+    if not plano.is_file():
+        return
+
+    with plano.open("r", encoding="utf-8-sig", newline="") as arquivo:
+        reader = csv.DictReader(arquivo, delimiter=";")
+        if not reader.fieldnames or "base_codigo" not in reader.fieldnames:
+            raise RuntimeError(
+                f"{plano.name}: falta a coluna base_codigo. "
+                "Importação bloqueada para evitar S/C incorreto."
+            )
+        codigos = sorted({
+            norm_codigo(row.get("base_codigo"))
+            for row in reader if norm_codigo(row.get("base_codigo"))
+        })
+    if not codigos:
+        raise RuntimeError(f"{plano.name}: lista vazia de bases corrigidas.")
+
+    marcas = ", ".join("%s" for _ in codigos)
+    sql = (
+        "SELECT base_codigo, sc, rm FROM public.jt_gestao_bases "
+        f"WHERE base_codigo IN ({marcas})"
+    )
+    resp = session.post(
+        f"{API_URL}/query",
+        headers=_headers(),
+        json={"sql": sql, "params": codigos},
+        timeout=min(API_TIMEOUT, 60),
+    )
+    if not resp.ok:
+        raise RuntimeError(
+            f"Não consegui confirmar os S/C publicados no PostgreSQL: "
+            f"HTTP {resp.status_code}: {resp.text[:250]}"
+        )
+    payload = resp.json()
+    if isinstance(payload, dict):
+        rows = next(
+            (payload.get(k) for k in ("rows", "data", "result", "resultado", "registros")
+             if isinstance(payload.get(k), list)), None
+        )
+    elif isinstance(payload, list):
+        rows = payload
+    else:
+        rows = None
+    if rows is None:
+        raise RuntimeError("Resposta inválida ao consultar os S/C publicados.")
+
+    publicados = {}
+    for row in rows:
+        if isinstance(row, dict):
+            cod, sc, rm = row.get("base_codigo"), row.get("sc"), row.get("rm")
+        elif isinstance(row, (list, tuple)) and len(row) == 3:
+            cod, sc, rm = row
+        else:
+            raise RuntimeError("Formato inválido de linha da Gestão publicada.")
+        publicados[norm_codigo(cod)] = {"sc": texto(sc), "rm": texto(rm)}
+
+    ausentes = [codigo for codigo in codigos if codigo not in publicados or codigo not in gestao]
+    if ausentes:
+        raise RuntimeError(
+            "Correção manual não encontrada na dimensão ou no XLSX para "
+            + ", ".join(ausentes)
+            + ". Importação bloqueada para não reverter S/C."
+        )
+
+    atualizados = 0
+    for codigo in codigos:
+        banco = publicados[codigo]
+        if not banco["sc"]:
+            raise RuntimeError(
+                f"Base {codigo}: S/C vazio na dimensão publicada. "
+                "Importação bloqueada para preservar correções anteriores."
+            )
+        rm_excel = normalizar(gestao[codigo].get("rm"))
+        rm_banco = normalizar(banco["rm"])
+        if rm_excel and rm_banco and rm_excel != rm_banco:
+            raise RuntimeError(
+                f"Base {codigo}: R/M do Excel diverge da Gestão publicada. "
+                "Conferir antes de importar."
+            )
+        anterior = texto(gestao[codigo].get("sc"))
+        if normalizar(anterior) != normalizar(banco["sc"]):
+            gestao[codigo]["sc"] = banco["sc"]
+            atualizados += 1
+    print(
+        f"Gestão confirmada: {len(codigos)} base(s) com correção manual "
+        f"protegidas pela dimensão PostgreSQL; {atualizados} S/C "
+        "ajustados na memória para esta importação.",
+        flush=True,
+    )
+
+
 def main() -> None:
     args = parse_args()
     global BATCH_SIZE
@@ -1558,6 +1659,7 @@ def main() -> None:
             print("Testando autenticação da JT API...")
             testar_api(session)
             print("JT API: autenticação OK")
+            aplicar_sc_confirmado_no_postgres(session, gestao)
             print("-" * 88)
 
         for path, indicador, data_ref in arquivos:
