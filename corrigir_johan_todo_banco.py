@@ -157,13 +157,14 @@ def carregar_alvos(path):
 
 def banco_dimensao(session, codigos):
     campos = CAMPOS_DIM[:8]
+    placeholders = ", ".join(["%s"] * len(codigos))
     registros = rows_as_dict(
         session,
         f"""SELECT base_codigo,base_nome,uf,rm,sc,regional,coordenador,supervisor
             FROM {DIM}
-            WHERE base_codigo = ANY(%s::text[])
+            WHERE base_codigo IN ({placeholders})
             ORDER BY base_codigo""",
-        campos, [codigos],
+        campos, codigos,
     )
     return {text(x["base_codigo"]): x for x in registros}
 
