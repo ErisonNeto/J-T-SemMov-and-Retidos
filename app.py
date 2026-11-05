@@ -256,47 +256,7 @@ def dashboard(
 
 @app.get('/api/snapshot')
 def snapshot(
-    indicador: str = Query(pattern='^(sem_mov|retidos)
-def download(
     indicador: str = Query(pattern='^(sem_mov|retidos)$'),
-    data_inicial: str = '',
-    data_final: str = '',
-    corte: str = Query(default='3', pattern='^(3|10)$'),
-    uf: str = '', sc: str = '', base: str = '',
-):
-    raw = carregar()
-    inicio_data, fim_data, _ = resolver_periodo(raw, indicador, data_inicial, data_final)
-    if inicio_data is None or fim_data is None:
-        raise HTTPException(status_code=404, detail='Não há dados carregados para este indicador.')
-
-    inicio_iso = inicio_data.isoformat()
-    fim_iso = fim_data.isoformat()
-    df = filtrar(raw, indicador, uf, sc, base)
-    df = df[(df.data >= inicio_iso) & (df.data <= fim_iso)]
-    limite = 3 if corte == '3' else 10
-    df = df[df.aging_valor > limite]
-
-    def stream():
-        def safe(v):
-            return "'" + v if isinstance(v, str) and v.lstrip().startswith(('=', '+', '-', '@')) else v
-
-        yield '\ufeff'
-        buf = io.StringIO()
-        writer = csv.writer(buf, delimiter=';')
-        writer.writerow(df.columns)
-        yield buf.getvalue()
-        buf.seek(0); buf.truncate(0)
-        for row in df.itertuples(index=False, name=None):
-            writer.writerow([safe(v) for v in row])
-            yield buf.getvalue()
-            buf.seek(0); buf.truncate(0)
-
-    return StreamingResponse(
-        stream(),
-        media_type='text/csv',
-        headers={'Content-Disposition': f'attachment; filename="resumo_{indicador}_{inicio_iso}_a_{fim_iso}_acima_{corte}.csv"'},
-    )
-),
     data: str = '',
     uf: str = '', sc: str = '', base: str = '',
 ):
