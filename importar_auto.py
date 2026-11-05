@@ -16,13 +16,11 @@ import requests
 import importar_excel as core
 
 
-# Salva a função original ANTES do monkeypatch para não criar recursão.
-_data_referencia_segura = core.data_referencia
-
-
-def data_referencia_auto(path: Path, indicador: str):
-    """Mesma validação segura do importador principal, inclusive A versus nome."""
-    return _data_referencia_segura(path, indicador)
+# O importador principal já faz a validação da data operacional e aceita
+# data_forcada em localizar_arquivos(). NÃO substituir sua função por um
+# wrapper com assinatura diferente: isso ignora todos os arquivos XLSX.
+#
+# Executar core.main() diretamente preserva --data-ref, --dry-run e --strict.
 
 
 def verificar_banco() -> None:
@@ -87,8 +85,7 @@ def verificar_banco() -> None:
         print(f"  Última data no banco: {itens[-1][0]}")
 
 
-# Monkey patch: localizar_arquivos() do importador passa a usar a regra automática.
-core.data_referencia = data_referencia_auto
+# Usa a função core.data_referencia original, sem monkeypatch.
 
 
 if __name__ == "__main__":
