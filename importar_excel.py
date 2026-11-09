@@ -1143,7 +1143,9 @@ def registro_chave(rec: dict) -> str:
 # -----------------------------------------------------------------------------
 
 def _headers() -> dict[str, str]:
-    h = {"Content-Type": "application/json"}
+    # Evita respostas comprimidas em Zstandard no JT074, que tem pouca memoria
+    # disponivel e ja apresentou ContentDecodingError por falta de RAM.
+    h = {"Content-Type": "application/json", "Accept-Encoding": "identity"}
     if API_KEY:
         h["X-API-Key"] = API_KEY
     return h
@@ -1416,6 +1418,7 @@ def localizar_arquivos(
     gestao_path: Path,
     data_forcada: Optional[date] = None,
     strict_reconhecimento: bool = False,
+    data_minima: Optional[date] = None,
 ) -> list[tuple[Path, str, date]]:
     encontrados: dict[tuple[str, str, str], tuple[Path, str, date]] = {}
     gestao_real = gestao_path.resolve() if gestao_path.exists() else None
@@ -1428,8 +1431,16 @@ def localizar_arquivos(
                 continue
             if path.name.startswith("~$"):
                 continue
+            # Um arquivo exportado antes do corte nao pode conter um snapshot
+            # operacional posterior a esse corte. Evita ler XLSX antigos.
+            if data_minima is not None:
+                exportado = data_exportacao_nome(path)
+                if exportado is not None and exportado < data_minima:
+                    continue
             indicador = detectar_indicador(path)
             data_ref = data_referencia(path, indicador, data_forcada=data_forcada)
+            if data_minima is not None and data_ref < data_minima:
+                continue
             # Mesmo conteúdo pode aparecer solto e dentro de ZIP. Mantém um por nome/data/indicador.
             chave = (indicador, data_ref.isoformat(), path.name.lower())
             encontrados[chave] = (path, indicador, data_ref)
@@ -1484,6 +1495,13 @@ def parse_args() -> argparse.Namespace:
         metavar="AAAA-MM-DD",
         help="Data operacional confirmada para arquivos de exportação com nome genérico; "
              "não usa o timestamp de download como data do indicador.",
+    )
+    parser.add_argument(
+        "--a-partir-de",
+        metavar="AAAA-MM-DD",
+        help="Processa somente snapshots desta data em diante; ignora dias antigos "
+             "sem apagar ou alterar registros existentes. Use quando os dias "
+             "anteriores ja estiverem confirmados no PostgreSQL.",
     )
     parser.add_argument(
         "--lote",
@@ -1614,6 +1632,14 @@ def main() -> None:
             raise ValueError(
                 "--data-ref exige uma data válida no formato AAAA-MM-DD."
             ) from exc
+    data_minima = None
+    if args.a_partir_de:
+        try:
+            data_minima = date.fromisoformat(args.a_partir_de)
+        except ValueError as exc:
+            raise ValueError(
+                "--a-partir-de exige uma data valida no formato AAAA-MM-DD."
+            ) from exc
     gestao_path = Path(args.gestao).expanduser().resolve()
 
     if not API_URL and not args.dry_run:
@@ -1639,6 +1665,7 @@ def main() -> None:
         args.fontes, gestao_path,
         data_forcada=data_forcada,
         strict_reconhecimento=args.strict,
+        data_minima=data_minima,
     )
     if not arquivos:
         print("Nenhum XLSX de SEM MOV/RETIDOS encontrado.")
