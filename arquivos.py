@@ -25,7 +25,7 @@ COLUNAS = DIMENSOES + ["pedidos", "linhas"]
 _API_URL = os.getenv("JT_API_URL", "https://jt-api.rockettechbr.com.br").rstrip("/")
 _API_KEY = os.getenv("JT_API_KEY", "").strip()
 _TIMEOUT = float(os.getenv("JT_API_TIMEOUT", "90"))
-_CACHE_SECONDS = max(5, int(os.getenv("JT_API_CACHE_SECONDS", "120")))
+_CACHE_SECONDS = max(30, int(os.getenv("JT_API_CACHE_SECONDS", "600")))
 _HISTORY_DAYS = max(
     JANELA_EVOLUCAO_DIAS + 9,
     int(os.getenv("JT_HISTORY_DAYS", "45")),
@@ -91,139 +91,118 @@ def _dataframe_da_resposta(payload: Any) -> pd.DataFrame:
 
 
 def _consultar_resumo() -> pd.DataFrame:
+    """Consulta SO as bases de Orlean, e agrega no PostgreSQL.
+
+    Antes, eram agrupadas e transferidas todas as bases do Brasil durante
+    45 dias, com 13 dimensoes por linha, e o filtro Orlean era aplicado
+    somente no dashboard. Agora a base e filtrada ANTES do GROUP BY.
+    A Gestao publicada e a fonte oficial para o S/C (incluindo Johan).
+    """
     inicio = (datetime.now(TIMEZONE).date() - timedelta(days=_HISTORY_DAYS)).isoformat()
-    # Usa a Gestão publicada como dimensão única, por código de base. Isso
-    # corrige a atribuição de R/M, S/C, UF e nome em todos os períodos,
-    # sem reimportar/editar milhões de remessas históricas.
-    # Antes da primeira publicação, permanece no modo legado.
-    gestao_ativa = False
-    try:
-        conf = requests.post(
-            f"{_API_URL}/query",
-            headers=_headers(),
+
+    with requests.Session() as session:
+        session.headers.update({"Accept-Encoding": "identity"})
+
+        # Dimensao pequena (cerca de 500 codigos): consulta simples,
+        # evitando filtros complexos que podem gerar 500 na JT API.
+        gres = session.post(
+            f"{_API_URL}/query", headers=_headers(),
             json={
-                "sql": """
-                    SELECT COUNT(*)::int AS qtd
-                    FROM information_schema.tables
-                    WHERE table_schema = 'public' AND table_name = 'jt_gestao_bases'
-                """,
+                "sql": (
+                    "SELECT base_codigo, base_nome, rm, sc, uf, regional "
+                    "FROM public.jt_gestao_bases"
+                ),
                 "params": [],
             },
             timeout=_TIMEOUT,
         )
-        if conf.ok:
-            x = _extrair_linhas(conf.json())
-            if x:
-                existe = int(x[0]["qtd"] if isinstance(x[0], dict) else x[0][0]) > 0
-                if existe:
-                    quantidade = requests.post(
-                        f"{_API_URL}/query",
-                        headers=_headers(),
-                        json={
-                            "sql": "SELECT COUNT(*)::int AS qtd FROM public.jt_gestao_bases",
-                            "params": [],
-                        },
-                        timeout=_TIMEOUT,
-                    )
-                    quantidade.raise_for_status()
-                    linhas_gestao = _extrair_linhas(quantidade.json())
-                    qtd = int(
-                        linhas_gestao[0]["qtd"]
-                        if isinstance(linhas_gestao[0], dict) else linhas_gestao[0][0]
-                    )
-                    gestao_ativa = qtd >= 500
-                    if not gestao_ativa:
-                        _status["aviso"] = (
-                            f"Tabela de Gestão parcialmente publicada ({qtd} códigos). "
-                            "Usando responsáveis originais até concluir a publicação."
-                        )
-        elif conf.status_code not in (400, 404, 422):
+        if not gres.ok:
             raise RuntimeError(
-                f"Falha ao consultar dimensão Gestão: HTTP {conf.status_code}"
+                f"JT API Gestao HTTP {gres.status_code}: {gres.text[:400]}"
             )
-    except requests.exceptions.RequestException as exc:
-        raise RuntimeError(f"Falha na consulta da Gestão: {exc}") from exc
+        gestao = {}
+        for row in _extrair_linhas(gres.json()):
+            if isinstance(row, dict):
+                cod = str(row.get("base_codigo") or "").strip()
+                origem = row
+            else:
+                cols = ("base_codigo", "base_nome", "rm", "sc", "uf", "regional")
+                origem = dict(zip(cols, row))
+                cod = str(origem.get("base_codigo") or "").strip()
+            if cod and "ORLEAN" in str(origem.get("rm") or "").upper():
+                gestao[cod] = {
+                    field: str(origem.get(field) or "").strip()
+                    for field in ("base_nome", "rm", "sc", "uf", "regional")
+                }
 
-    if gestao_ativa:
+        if not gestao:
+            raise RuntimeError(
+                "A Gestao publicada nao retornou bases de Orlean; "
+                "nao farei a consulta nacional completa."
+            )
+        codigos = sorted(gestao)
+
+        # GROUP BY enxuto. Exclui motivos e nomes repetidos por remessa;
+        # recupera os atributos oficiais pela Gestao de 146 bases.
         sql = """
-            SELECT
-                d.indicador,
-                d.data::text AS data,
-                COALESCE(d.base_codigo,'') AS base_codigo,
-                COALESCE(NULLIF(g.base_nome,''),d.base_nome,'') AS base_nome,
-                COALESCE(NULLIF(g.uf,''),d.uf,'') AS uf,
-                COALESCE(NULLIF(g.rm,''),d.rm,'') AS rm,
-                COALESCE(CASE WHEN g.base_codigo IS NOT NULL THEN g.sc ELSE d.sc END,'') AS sc,
-                COALESCE(NULLIF(g.regional,''),d.regional,'') AS regional,
-                COALESCE(d.aging_label,'') AS aging_label,
-                COALESCE(d.aging_valor,0)::int AS aging_valor,
-                COALESCE(d.acima_3,0)::int AS acima_3,
-                COALESCE(d.acima_10,0)::int AS acima_10,
-                COALESCE(d.motivo,'') AS motivo,
-                SUM(COALESCE(d.pedidos,0))::bigint AS pedidos,
-                COUNT(*)::bigint AS linhas
+            SELECT d.indicador,
+                   d.data::text AS data,
+                   COALESCE(d.base_codigo, '') AS base_codigo,
+                   COALESCE(d.aging_valor, 0)::int AS aging_valor,
+                   SUM(COALESCE(d.pedidos, 0))::bigint AS pedidos,
+                   COUNT(*)::bigint AS linhas
             FROM public.sem_mov_retidos_detalhe AS d
-            LEFT JOIN public.jt_gestao_bases AS g
-              ON d.base_codigo = g.base_codigo
             WHERE d.data >= %s::date
-            GROUP BY 1,2,3,4,5,6,7,8,9,10,11,12,13
-            ORDER BY 2,1,4,10
+              AND d.base_codigo = ANY(%s::text[])
+              AND d.indicador IN ('sem_mov', 'retidos')
+            GROUP BY 1,2,3,4
+            ORDER BY 2,1,3,4
         """
-    else:
-        sql = """
-            SELECT
-                indicador,
-                data::text AS data,
-                COALESCE(base_codigo, '') AS base_codigo,
-                COALESCE(base_nome, '') AS base_nome,
-                COALESCE(uf, '') AS uf,
-                COALESCE(rm, '') AS rm,
-                COALESCE(sc, '') AS sc,
-                COALESCE(regional, '') AS regional,
-                COALESCE(aging_label, '') AS aging_label,
-                COALESCE(aging_valor, 0)::int AS aging_valor,
-                COALESCE(acima_3, 0)::int AS acima_3,
-                COALESCE(acima_10, 0)::int AS acima_10,
-                COALESCE(motivo, '') AS motivo,
-                SUM(COALESCE(pedidos, 0))::bigint AS pedidos,
-                COUNT(*)::bigint AS linhas
-            FROM public.sem_mov_retidos_detalhe
-            WHERE data >= %s::date
-            GROUP BY
-                indicador, data, base_codigo, base_nome, uf, rm, sc, regional,
-                aging_label, aging_valor, acima_3, acima_10, motivo
-            ORDER BY data, indicador, base_nome, aging_valor
-        """
-    resp = requests.post(
-        f"{_API_URL}/query",
-        headers=_headers(),
-        json={"sql": sql, "params": [inicio]},
-        timeout=_TIMEOUT,
-    )
-    if not resp.ok:
-        raise RuntimeError(
-            f"JT API /query retornou HTTP {resp.status_code}: {resp.text[:500]}"
+        resp = session.post(
+            f"{_API_URL}/query", headers=_headers(),
+            json={"sql": sql, "params": [inicio, codigos]},
+            timeout=max(_TIMEOUT, 120),
         )
+        if not resp.ok:
+            raise RuntimeError(
+                f"JT API /query resumo Orlean HTTP {resp.status_code}: "
+                f"{resp.text[:500]}"
+            )
+        colunas_sql = (
+            "indicador", "data", "base_codigo", "aging_valor", "pedidos", "linhas"
+        )
+        rows = _extrair_linhas(resp.json())
 
-    df = _dataframe_da_resposta(resp.json())
-    _status["fonte"] = (
-        "PostgreSQL via JT API + Gestão de colaboradores"
-        if gestao_ativa else "PostgreSQL via JT API"
+    if not rows:
+        _status["fonte"] = "PostgreSQL via JT API - somente Orlean"
+        return pd.DataFrame(columns=COLUNAS)
+
+    df = pd.DataFrame(
+        rows if isinstance(rows[0], dict)
+        else [dict(zip(colunas_sql, row)) for row in rows]
     )
-    if df.empty:
-        return df
+    faltantes = set(colunas_sql) - set(df.columns)
+    if faltantes:
+        raise ValueError(f"JT API omitiu colunas de resumo: {sorted(faltantes)}")
 
-    for col in (
-        "indicador", "data", "base_codigo", "base_nome", "uf", "rm", "sc",
-        "regional", "aging_label", "motivo",
-    ):
-        df[col] = df[col].fillna("").astype(str).str.strip()
+    df["base_codigo"] = df["base_codigo"].fillna("").astype(str).str.strip()
+    for field in ("base_nome", "uf", "rm", "sc", "regional"):
+        df[field] = df["base_codigo"].map(
+            {cod: dados[field] for cod, dados in gestao.items()}
+        ).fillna("")
+    df["indicador"] = df["indicador"].fillna("").astype(str).str.strip()
+    df["data"] = df["data"].fillna("").astype(str).str.strip()
+    for field in ("aging_valor", "pedidos", "linhas"):
+        df[field] = pd.to_numeric(df[field], errors="coerce").fillna(0).astype("int64")
+    df["aging_label"] = df["aging_valor"].astype(str) + " dias"
+    df["acima_3"] = (df["aging_valor"] > 3).astype("int64")
+    df["acima_10"] = (df["aging_valor"] > 10).astype("int64")
+    df["motivo"] = ""
 
-    for col in ("aging_valor", "acima_3", "acima_10", "pedidos", "linhas"):
-        df[col] = pd.to_numeric(df[col], errors="coerce").fillna(0).astype("int64")
-
-    return df
-
+    _status["fonte"] = (
+        "PostgreSQL via JT API • consulta otimizada: somente bases de Orlean"
+    )
+    return df[COLUNAS].copy()
 
 def carregar() -> pd.DataFrame:
     """Carrega um snapshot agregado com cache curto para não repetir a query por endpoint."""
