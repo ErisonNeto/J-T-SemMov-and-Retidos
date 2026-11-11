@@ -314,6 +314,61 @@ def carregar_indicadores(session, volume):
     return numeradores, dias_com_carga
 
 
+def publicar_volume_postgres(session, volume, lote=100):
+    """Persiste J/M por dia e base para o dashboard Render.
+
+    API /import com tabela exclusiva e chave (data, base_codigo).
+    Reenvio de um dia atualiza valores, sem duplicar a volumetria.
+    Nao altera sem_mov_retidos_detalhe nem a Gestao publicada.
+    """
+    if not volume:
+        return 0
+    if lote < 1 or lote > 500:
+        raise ValueError("lote de Outlet fora do limite (1..500)")
+    registros = []
+    for (dt, cod), (j, m) in sorted(volume.items()):
+        if not codigo(cod) or dia(dt) is None:
+            raise RuntimeError(f"Outlet invalido para {dt!r}/{cod!r}")
+        j, m = int(j), int(m)
+        if j < 0 or m < 0:
+            raise RuntimeError("Volume J/M nao pode ser negativo")
+        registros.append({
+            "data": dt,
+            "base_codigo": cod,
+            "coletada": j,
+            "saida_entrega": m,
+        })
+    total = 0
+    for pos in range(0, len(registros), lote):
+        parte = registros[pos:pos + lote]
+        payload = {
+            "tabela": "jt_outlet_volume_diario",
+            "chave": ["data", "base_codigo"],
+            "registros": parte,
+            "criar_tabela": True,
+            "adicionar_colunas": True,
+        }
+        resp = session.post(
+            f"{core.API_URL}/import",
+            headers=core._headers(),
+            json=payload,
+            timeout=max(core.API_TIMEOUT, 120),
+        )
+        if not resp.ok:
+            raise RuntimeError(
+                "Nao foi possivel publicar o denominador Outlet na tabela "
+                "jt_outlet_volume_diario. Verifique permissoes CREATE/INSERT "
+                "da JT API ou crie a tabela pela migracao SQL. "
+                f"HTTP {resp.status_code}: {resp.text[:650]}"
+            )
+        total += len(parte)
+        print(
+            f"  VOLUME OUTLET PostgreSQL: {total:,}/{len(registros):,} "
+            f"base(s)-dia enviadas", flush=True
+        )
+    return total
+
+
 def agregar(volume, gestao, numeradores, dias_com_carga, modo):
     grupos = defaultdict(lambda: [0, 0, 0, 0])
     for (dt, cod), (j, m) in volume.items():
