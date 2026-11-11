@@ -187,6 +187,21 @@ def escolher_aba(wb, nome):
     melhor_score = -1
     diagnosticos = []
     for ws in wb.worksheets:
+        # Alguns XLSX exportados pelo sistema J&T declaram a dimensao
+        # A1:M1 mesmo quando a worksheet possui milhares de linhas.
+        # Em read_only=True o openpyxl confia nessa dimensao e le so
+        # o cabecalho. reset_dimensions() obriga a varrer as linhas reais.
+        # Continua usando EXATAMENTE A (data) e I (codigo).
+        if hasattr(ws, "reset_dimensions"):
+            dimensao_informada = ws.calculate_dimension()
+            if ws.max_row is None or ws.max_row <= 1:
+                ws.reset_dimensions()
+                print(
+                    f"  Outlet: ignorando dimensao Excel incorreta "
+                    f"{dimensao_informada!r} na aba {ws.title!r}; "
+                    "lendo as linhas reais do XML.",
+                    flush=True,
+                )
         score = datas_validas = codigos_validos = 0
         exemplos = []
         for n, row in enumerate(ws.iter_rows(min_col=1, max_col=13, values_only=True)):
@@ -228,6 +243,8 @@ def carregar_volume(arquivo, gestao, aba):
     wb = load_workbook(arquivo, data_only=True, read_only=True)
     try:
         ws = escolher_aba(wb, aba)
+        # A selecao acima ja corrige, quando necessario, o limite errado
+        # de linhas informado pelo XLSX. Reutilizamos a mesma worksheet.
         volume = defaultdict(lambda: [0, 0])
         lidas = validas = fora_orlean = invalidas = 0
         for row in ws.iter_rows(min_col=1, max_col=13, values_only=True):
