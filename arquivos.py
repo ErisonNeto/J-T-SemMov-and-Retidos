@@ -232,5 +232,118 @@ def carregar() -> pd.DataFrame:
         return _cache_df.copy()
 
 
+
+# Cache independente da volumetria, com invalidacao automatica.
+_vol_lock = threading.Lock()
+_vol_cache: pd.DataFrame | None = None
+_vol_until = 0.0
+_vol_warning = None
+
+
+def carregar_volumetria() -> tuple[pd.DataFrame, str | None]:
+    """Volumetria Outlet J+M por base/data publicada via JT API.
+
+    So consulta a tabela pequena jt_outlet_volume_diario (nao baixa
+    planilhas nem faz leitura completa de remessas). Quando a tabela
+    ainda nao existir, indica indisponibilidade, jamais 0%.
+    """
+    global _vol_cache, _vol_until, _vol_warning
+    agora = time.monotonic()
+    if _vol_cache is not None and agora < _vol_until:
+        return _vol_cache.copy(), _vol_warning
+
+    with _vol_lock:
+        if _vol_cache is not None and time.monotonic() < _vol_until:
+            return _vol_cache.copy(), _vol_warning
+        cols = ["data", "base_codigo", "coletada", "saida_entrega"]
+        try:
+            inicio = (
+                datetime.now(TIMEZONE).date()
+                - timedelta(days=_HISTORY_DAYS)
+            ).isoformat()
+            with requests.Session() as session:
+                session.headers.update({"Accept-Encoding": "identity"})
+                resp = session.post(
+                    f"{_API_URL}/query",
+                    headers=_headers(),
+                    json={
+                        "sql": """
+                            SELECT data::text AS data, base_codigo,
+                                   SUM(COALESCE(coletada::bigint,0))::bigint AS coletada,
+                                   SUM(COALESCE(saida_entrega::bigint,0))::bigint AS saida_entrega
+                            FROM public.jt_outlet_volume_diario
+                            WHERE data::date >= %s::date
+                            GROUP BY data, base_codigo
+                        """,
+                        "params": [inicio],
+                    },
+                    timeout=_TIMEOUT,
+                )
+                if not resp.ok:
+                    raise RuntimeError(
+                        f"JT API tabela jt_outlet_volume_diario: "
+                        f"HTTP {resp.status_code}: {resp.text[:250]}"
+                    )
+                rows = _extrair_linhas(resp.json())
+                df = pd.DataFrame(
+                    rows if rows and isinstance(rows[0], dict)
+                    else [dict(zip(cols, row)) for row in rows],
+                    columns=cols,
+                )
+                for campo in ("coletada", "saida_entrega"):
+                    df[campo] = pd.to_numeric(
+                        df[campo], errors="coerce"
+                    ).fillna(0).astype("int64")
+                df["data"] = df["data"].fillna("").astype(str).str.strip()
+                df["base_codigo"] = df["base_codigo"].fillna("").astype(str).str.strip()
+
+                # Gestao e a referencia para filtrar S/C e UF do Outlet.
+                gresp = session.post(
+                    f"{_API_URL}/query",
+                    headers=_headers(),
+                    json={
+                        "sql": (
+                            "SELECT base_codigo, rm, sc, uf "
+                            "FROM public.jt_gestao_bases"
+                        ),
+                        "params": [],
+                    },
+                    timeout=_TIMEOUT,
+                )
+                if not gresp.ok:
+                    raise RuntimeError(
+                        f"JT API Gestao Outlet HTTP {gresp.status_code}: "
+                        f"{gresp.text[:250]}"
+                    )
+                gc = ("base_codigo", "rm", "sc", "uf")
+                g = pd.DataFrame(
+                    (r if isinstance(r, dict) else dict(zip(gc, r)))
+                    for r in _extrair_linhas(gresp.json())
+                )
+                if g.empty:
+                    raise RuntimeError("Gestao publicada vazia")
+                for campo in gc:
+                    g[campo] = g[campo].fillna("").astype(str).str.strip()
+                g = g[g["rm"].str.contains("ORLEAN", case=False, na=False)]
+                g = g.drop_duplicates(subset=["base_codigo"])
+                df = df.merge(g[["base_codigo", "sc", "uf"]], on="base_codigo", how="inner")
+
+            _vol_cache = df
+            _vol_warning = None if not df.empty else (
+                "Nenhuma volumetria Outlet publicada no periodo. "
+                "Execute o importador dos tres arquivos atualizado."
+            )
+            _vol_until = time.monotonic() + _CACHE_SECONDS
+        except Exception as exc:
+            _vol_cache = pd.DataFrame(
+                columns=cols + ["sc", "uf"]
+            )
+            _vol_warning = (
+                "Volumetria Outlet nao disponivel no PostgreSQL: "
+                + str(exc)[:260]
+            )
+            _vol_until = time.monotonic() + 60
+        return _vol_cache.copy(), _vol_warning
+
 def status_fonte() -> dict:
     return dict(_status)
