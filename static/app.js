@@ -36,6 +36,25 @@ function meta(el,m,cur){
  el.hidden=false;el.textContent='Meta ≤ '+fmt(m);
  if(cur!==null&&cur!==undefined)el.classList.add(cur<=m?'good':'bad');
 }
+function renderVolumetria(d){
+ const v=d.volumetria||{};
+ const sem=v.sem_mov||{},ret=v.retidos||{};
+ const pct=n=>n===null||n===undefined?'—':Number(n).toLocaleString('pt-BR',{minimumFractionDigits:2,maximumFractionDigits:2})+'%';
+ $('#volTotal').textContent=fmt(v.total);
+ $('#volSplit').textContent=v.total===null||v.total===undefined
+  ?'Sem volumetria J + M cadastrada'
+  :'Coletada (J): '+fmt(v.coletada)+' • Saída (M): '+fmt(v.saida_entrega);
+ $('#pctSemMov').textContent=pct(sem.percentual);
+ $('#pctRetidos').textContent=pct(ret.percentual);
+ $('#pctSemMovInfo').textContent=sem.pedidos===null||sem.pedidos===undefined
+  ?'Sem dados suficientes para calcular'
+  :fmt(sem.pedidos)+' pedidos >2 dias ÷ '+fmt(v.total)+' volumes';
+ $('#pctRetidosInfo').textContent=ret.pedidos===null||ret.pedidos===undefined
+  ?'Sem dados suficientes para calcular'
+  :fmt(ret.pedidos)+' pedidos >3 dias ÷ '+fmt(v.total)+' volumes';
+ $('#volAviso').textContent=v.aviso||'';
+ $('#volAviso').classList.toggle('hidden',!v.aviso);
+}
 function renderKpis(d){
  const p=d.periodo||{};
  const atualLabel=p.semana_atual||'Período atual',anteriorLabel=p.semana_anterior||'Período anterior';
@@ -80,6 +99,11 @@ function limparResultadosAoFiltrar(){
  $('#basesBody').innerHTML='<tr><td colspan="5" class="empty">Atualizando bases para os filtros selecionados...</td></tr>';
  $('#scBody').innerHTML='<tr><td colspan="3" class="empty">Atualizando responsáveis...</td></tr>';
  $('#evolutionChart').innerHTML='<div class="empty">Atualizando evolução...</div>';
+ ['#volTotal','#pctSemMov','#pctRetidos'].forEach(id=>$(id).textContent='—');
+ $('#volSplit').textContent='Carregando volumetria...';
+ $('#pctSemMovInfo').textContent='Calculando...';
+ $('#pctRetidosInfo').textContent='Calculando...';
+ $('#volAviso').textContent='';
  $('#agingBars').innerHTML='<div class="empty">Atualizando Aging...</div>';
  ['3','10'].forEach(c=>{
   for(const k of ['prev','cur','var'])$('#'+k+c).textContent='—';
@@ -104,7 +128,7 @@ function renderSnapshot(d){
   campos.map(k=>'<th class="num">'+fmt(total[k]||0)+'</th>').join('')+'</tr>';
  $('#snapshotNote').textContent=d.aviso||'Comparar somente snapshots da mesma data.';
 }
-async function loadDashboard(){const request=++state.request;document.body.setAttribute('aria-busy','true');limparResultadosAoFiltrar();$('#snapshotBody').innerHTML='<tr><td colspan="9" class="empty">Conferindo remessas do dia final...</td></tr>';$('#snapshotFoot').replaceChildren();$('#loadError').classList.add('hidden');try{if($('#fDataInicial').value>$('#fDataFinal').value){toast('Data inicial não pode ser maior que a final');return}const d=await json('/api/dashboard?'+q());if(request!==state.request)return;const fs=d.fonte||{};$('#sourceStatus').textContent=fs.fonte?fs.fonte+(fs.sincronizado_em?' • Sincronizado: '+new Date(fs.sincronizado_em).toLocaleString('pt-BR'):''):'';$('#sourceWarning').textContent=fs.aviso||'';$('#sourceWarning').classList.toggle('hidden',!fs.aviso);renderKpis(d);lineChart($('#evolutionChart'),d.evolucao);bars($('#agingBars'),d.aging);renderTables(d);
+async function loadDashboard(){const request=++state.request;document.body.setAttribute('aria-busy','true');limparResultadosAoFiltrar();$('#snapshotBody').innerHTML='<tr><td colspan="9" class="empty">Conferindo remessas do dia final...</td></tr>';$('#snapshotFoot').replaceChildren();$('#loadError').classList.add('hidden');try{if($('#fDataInicial').value>$('#fDataFinal').value){toast('Data inicial não pode ser maior que a final');return}const d=await json('/api/dashboard?'+q());if(request!==state.request)return;const fs=d.fonte||{};$('#sourceStatus').textContent=fs.fonte?fs.fonte+(fs.sincronizado_em?' • Sincronizado: '+new Date(fs.sincronizado_em).toLocaleString('pt-BR'):''):'';$('#sourceWarning').textContent=fs.aviso||'';$('#sourceWarning').classList.toggle('hidden',!fs.aviso);renderKpis(d);renderVolumetria(d);lineChart($('#evolutionChart'),d.evolucao);bars($('#agingBars'),d.aging);renderTables(d);
 const sp=new URLSearchParams({indicador:state.indicador,data:$('#fDataFinal').value,uf:$('#fUf').value,sc:$('#fSc').value,base:$('#fBase').value});
 json('/api/snapshot?'+sp).then(snapshot=>{if(request===state.request)renderSnapshot(snapshot)}).catch(err=>{
  if(request===state.request){
