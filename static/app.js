@@ -15,22 +15,20 @@ function dayUTC(s){return new Date(s+'T12:00:00Z').getUTCDay()}
 function setPeriodDates(items){
  const disponiveis=[...new Set(items||[])].filter(x=>/^\d{4}-\d{2}-\d{2}$/.test(x)).sort();
  const ini=$('#fDataInicial'),fim=$('#fDataFinal'),oldIni=ini.value,oldFim=fim.value;
- ini.innerHTML='';fim.innerHTML='';
- if(!disponiveis.length)return;
- // Incluir no seletor todos os dias do calendário, mesmo os que não têm carga.
- // Assim o usuário pode selecionar exatamente W43 e W44 e visualizar dias faltantes.
+ if(!disponiveis.length){ini.value='';fim.value='';return;}
  const min=disponiveis[0],max=disponiveis[disponiveis.length-1];
  const primeiraSegunda=isoShift(min,-((dayUTC(min)+6)%7));
- for(let dia=primeiraSegunda;dia<=max;dia=isoShift(dia,1)){
-  for(const el of [ini,fim]){const o=document.createElement('option');o.value=dia;o.textContent=fmtDate(dia);el.appendChild(o)}
- }
- // Abertura padrão na última semana encerrada, de segunda a domingo.
+ ini.min=primeiraSegunda;fim.min=primeiraSegunda;
+ ini.max=max;fim.max=max;
+ // Padrao da ultima semana encerrada (segunda a domingo).
  const domingo=isoShift(max,-dayUTC(max));
  const finalPadrao=domingo>=primeiraSegunda?domingo:max;
  const inicialPadrao=isoShift(finalPadrao,-6);
- fim.value=oldFim&&[...fim.options].some(x=>x.value===oldFim)?oldFim:finalPadrao;
- ini.value=oldIni&&[...ini.options].some(x=>x.value===oldIni)&&oldIni<=fim.value?oldIni:inicialPadrao;
+ const valida=x=>/^\d{4}-\d{2}-\d{2}$/.test(x)&&x>=primeiraSegunda&&x<=max;
+ fim.value=valida(oldFim)?oldFim:finalPadrao;
+ ini.value=valida(oldIni)&&oldIni<=fim.value?oldIni:inicialPadrao;
 }
+
 async function loadFilters(ind=state.indicador){const f=await json('/api/filters?indicador='+ind);if(ind!==state.indicador)return;setPeriodDates(f.datas||[]);setSelect($('#fUf'),f.uf||[]);setSelect($('#fSc'),f.sc||[]);setSelect($('#fBase'),f.bases||[],x=>({v:x.codigo,t:`${x.nome} (${x.codigo})`}));}
 function meta(el,m,cur){
  el.className='meta';
