@@ -1066,3 +1066,27 @@ th{background:#f8f9fb}tbody tr:hover{background:#fff8f8}
 .kpi-head .meta[hidden]{display:none!important}
 .kpi-grid + .grid-2{margin-top:18px}
 @media(max-width:700px){.metric-note{font-size:10px}}
+
+
+/* Filtros de periodo nativos com calendario em vez de dropdown */
+.filter input[type="date"] {
+  display:block;
+  width:100%;
+  min-height:41px;
+  background:#fff;
+  color:var(--text);
+  border:1px solid #d9dee7;
+  border-radius:9px;
+  padding:8px 10px;
+  font:inherit;
+  font-size:12px;
+  color-scheme:light;
+}
+.filter input[type="date"]:focus-visible {
+  border-color:#d71920;
+  outline:3px solid rgba(215,25,32,.12);
+}
+.filter input[type="date"]::-webkit-calendar-picker-indicator {
+  cursor:pointer;
+  opacity:.8;
+}
