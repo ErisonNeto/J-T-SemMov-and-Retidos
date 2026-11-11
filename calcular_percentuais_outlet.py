@@ -119,21 +119,28 @@ def consulta(session, sql, campos, params=None):
         json={"sql": sql, "params": params or []},
         timeout=max(core.API_TIMEOUT, 120),
     )
-    resp.raise_for_status()
+    if not resp.ok:
+        raise RuntimeError(
+            f"JT API /query falhou: HTTP {resp.status_code} | "
+            f"resposta do servidor: {resp.text[:1200]} | "
+            f"consulta: {sql.strip()[:300]}"
+        )
     return extrair(resp.json(), campos)
 
 
 def gestao_publicada(session):
     campos = ["base_codigo", "base_nome", "rm", "sc", "uf"]
+    # Faz consulta simples para compatibilidade com a JT API /query.
+    # A tabela tem poucas centenas de bases; o filtro Orlean e feito
+    # no cliente para evitar que filtros SQL complexos causem erro 500.
     rows = consulta(session, """
         SELECT base_codigo, base_nome, rm, sc, uf
         FROM public.jt_gestao_bases
-        WHERE UPPER(COALESCE(rm, '')) LIKE '%ORLEAN%'
     """, campos)
     saida = {}
     for r in rows:
         cod = codigo(r.get("base_codigo"))
-        if cod:
+        if cod and "ORLEAN" in str_clean(r.get("rm")).upper():
             saida[cod] = {k: str_clean(r.get(k)) for k in campos}
     if not saida:
         raise RuntimeError("Nenhuma base de Orlean encontrada na Gestao publicada.")
