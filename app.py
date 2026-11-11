@@ -8,7 +8,7 @@ from fastapi.responses import HTMLResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
 from config import METAS
-from arquivos import carregar, status_fonte
+from arquivos import carregar, status_fonte, carregar_volumetria
 
 BASE_DIR = Path(__file__).resolve().parent
 app = FastAPI(title='J&T | Sem Movimentação e Retidos — PostgreSQL')
@@ -48,6 +48,109 @@ def quantidades(df):
         'acima_10': int(pedidos[aging > 10].sum()),
     }
 
+
+
+def percentuais_da_volumetria(raw, volume, inicio, fim, uf='', sc='', base='', erro_volume=None):
+    """Taxas por volume J+M, na mesma data/base; nunca media de percentuais.
+
+    Para cada dia, exige que o snapshot do indicador exista para Orlean
+    e que haja denominador no Outlet para o recorte selecionado.
+    """
+    sem_v = {
+        'percentual': None, 'pedidos': None, 'limiar_dias': 2,
+        'criterio': 'tempo sem movimentacao > 2 dias',
+    }
+    ret_v = {
+        'percentual': None, 'pedidos': None, 'limiar_dias': 3,
+        'criterio': 'tempo retido > 3 dias; prazo vencido nao validado',
+    }
+    saida = {
+        'coletada': None, 'saida_entrega': None, 'total': None,
+        'sem_mov': sem_v, 'retidos': ret_v,
+        'aviso': erro_volume,
+    }
+    if volume.empty:
+        saida['aviso'] = (
+            erro_volume or
+            'Sem volumetria Outlet no PostgreSQL. Execute a importacao atualizada.'
+        )
+        return saida
+
+    vol = volume[(volume.data >= inicio) & (volume.data <= fim)]
+    for campo, valor in [('uf', uf), ('sc', sc), ('base_codigo', base)]:
+        if valor:
+            vol = vol[vol[campo] == valor]
+    if vol.empty:
+        saida['aviso'] = (
+            'Nao existe volumetria Outlet para as datas e bases selecionadas.'
+        )
+        return saida
+
+    coletada = int(vol['coletada'].sum())
+    entregue = int(vol['saida_entrega'].sum())
+    denominador = coletada + entregue
+    saida.update({
+        'coletada': coletada,
+        'saida_entrega': entregue,
+        'total': denominador,
+    })
+    if denominador <= 0:
+        saida['aviso'] = 'A volumetria J + M e zero neste recorte.'
+        return saida
+
+    dias_esperados = set(
+        datas_entre(date.fromisoformat(inicio), date.fromisoformat(fim))
+    )
+    dias_com_volume = set(vol['data'].dropna().astype(str))
+    dias_faltando_volume = dias_esperados - dias_com_volume
+
+    regional = somente_orlean(raw)
+    # Verificar snapshot por dia no conjunto inteiro de Orlean, pois
+    # uma base sem pedidos em um dia pode ser um zero verdadeiro.
+    base_regional = regional
+    subset = regional[(regional.data >= inicio) & (regional.data <= fim)]
+    for campo, valor in [('uf', uf), ('sc', sc), ('base_codigo', base)]:
+        if valor:
+            subset = subset[subset[campo] == valor]
+
+    pendencias = []
+    for indicador, chave, limiar in [
+        ('sem_mov', 'sem_mov', 2),
+        ('retidos', 'retidos', 3),
+    ]:
+        dias_snapshot = set(
+            base_regional.loc[
+                base_regional.indicador == indicador, 'data'
+            ].dropna().astype(str)
+        )
+        faltando = sorted(
+            dias_faltando_volume | (dias_esperados - dias_snapshot)
+        )
+        if faltando:
+            pendencias.append(
+                f"{chave}: sem cobertura completa em {', '.join(faltando[:4])}"
+                + ('...' if len(faltando) > 4 else '')
+            )
+            continue
+        recorte = subset[
+            (subset.indicador == indicador)
+            & (subset.aging_valor > limiar)
+        ]
+        pedidos = int(recorte['pedidos'].sum())
+        saida[chave]['pedidos'] = pedidos
+        saida[chave]['percentual'] = round(
+            100 * pedidos / denominador, 2
+        )
+    if pendencias:
+        saida['aviso'] = (
+            'Percentuais incompletos: ' + '; '.join(pendencias)
+        )
+    else:
+        saida['aviso'] = (
+            'Retidos usa tempo de retencao > 3 dias; '
+            'o vencimento oficial do SLA ainda precisa de validacao.'
+        )
+    return saida
 
 def ranking(df, columns, limit):
     if df.empty:
@@ -176,6 +279,12 @@ def dashboard(
                 'acima_10': {'atual': None, 'anterior': None, 'variacao': None, 'meta': METAS[indicador]['acima_10'], 'dentro_meta': None},
             },
             'evolucao': [], 'aging': [], 'top_bases': [], 'top_sc': [], 'motivos': [],
+            'volumetria': {
+                'coletada': None, 'saida_entrega': None, 'total': None,
+                'sem_mov': {'percentual': None, 'pedidos': None},
+                'retidos': {'percentual': None, 'pedidos': None},
+                'aviso': 'Sem periodo disponivel',
+            },
             'ultima_carga': None, 'fonte': status_fonte(),
         }
 
@@ -228,8 +337,17 @@ def dashboard(
         prev = quantidades(anterior_df[anterior_df.base_codigo == b['base_codigo']])['acima_3'] if anterior_completo else None
         b['variacao'] = variacao(b['acima_3'], prev) if atual_completo else None
 
+    # Valores de Outlet permanecem independentes do indicador selecionado:
+    # ambos os percentuais aparecem lado a lado no mesmo painel.
+    volume, erro_volume = carregar_volumetria()
+    kpi_volume = percentuais_da_volumetria(
+        raw, volume, inicio_iso, fim_iso,
+        uf=uf, sc=sc, base=base, erro_volume=erro_volume,
+    )
+
     return {
         'indicador': indicador,
+        'volumetria': kpi_volume,
         'periodo': {
             'inicio': inicio_iso,
             'fim': fim_iso,
