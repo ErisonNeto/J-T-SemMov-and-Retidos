@@ -131,6 +131,24 @@ def main() -> None:
         gestores = outlet.gestao_publicada(session)
         gestao_import = core.carregar_gestao(gestao_local)
         core.aplicar_sc_confirmado_no_postgres(session, gestao_import)
+        # Para as bases de Orlean, a gestao publicada no PostgreSQL e a
+        # fonte oficial de atribuicao de R/M e S/C; evita sobrescrever
+        # a correcao historica do Johan em futuras importacoes.
+        alinhadas = 0
+        for codigo_base, fonte in gestores.items():
+            g = gestao_import.get(codigo_base)
+            if g is None:
+                continue
+            if g.get("sc") != fonte["sc"] or g.get("rm") != fonte["rm"]:
+                alinhadas += 1
+            g["sc"] = fonte["sc"]
+            g["rm"] = fonte["rm"]
+            g["uf"] = fonte["uf"]
+        print(
+            f"Gestao Orlean: {len(gestores)} bases publicadas; "
+            f"{alinhadas} atribuicoes locais alinhadas ao banco.",
+            flush=True,
+        )
 
         agrupados: dict[str, dict[str, tuple[Path, str, dict | None]]] = defaultdict(dict)
         for path, tipo in arquivos:
