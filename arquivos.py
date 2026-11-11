@@ -98,6 +98,7 @@ def _consultar_resumo() -> pd.DataFrame:
     somente no dashboard. Agora a base e filtrada ANTES do GROUP BY.
     A Gestao publicada e a fonte oficial para o S/C (incluindo Johan).
     """
+    inicio_perf = time.perf_counter()
     inicio = (datetime.now(TIMEZONE).date() - timedelta(days=_HISTORY_DAYS)).isoformat()
 
     with requests.Session() as session:
@@ -175,6 +176,8 @@ def _consultar_resumo() -> pd.DataFrame:
 
     if not rows:
         _status["fonte"] = "PostgreSQL via JT API - somente Orlean"
+        _status["consulta_segundos"] = round(time.perf_counter() - inicio_perf, 2)
+        _status["linhas_resumo"] = 0
         return pd.DataFrame(columns=COLUNAS)
 
     df = pd.DataFrame(
@@ -201,6 +204,14 @@ def _consultar_resumo() -> pd.DataFrame:
 
     _status["fonte"] = (
         "PostgreSQL via JT API • consulta otimizada: somente bases de Orlean"
+    )
+    _status["consulta_segundos"] = round(time.perf_counter() - inicio_perf, 2)
+    _status["linhas_resumo"] = len(df)
+    _status["bases_orlean"] = len(gestao)
+    print(
+        f"[SEM MOV/RETIDOS] Resumo Orlean: {len(df):,} linhas "
+        f"de {len(gestao)} bases em {_status['consulta_segundos']}s; "
+        f"cache {_CACHE_SECONDS}s.", flush=True
     )
     return df[COLUNAS].copy()
 
