@@ -38,6 +38,8 @@ def str_clean(v):
 
 def codigo(v):
     s = core.norm_codigo(v)
+    # Alguns relatorios exportam codigos numericos como texto com ".00".
+    s = re.sub(r"^(\d{3,10})[.,]0+$", r"\1", s)
     return s if re.fullmatch(r"\d{3,10}", s) else ""
 
 
@@ -67,31 +69,57 @@ def numero(v):
 
 
 def dia(v):
+    """Data operacional em formatos Excel, J&T e ISO, sem inferir pelo download."""
     if isinstance(v, datetime):
         return v.date()
     if isinstance(v, date):
         return v
-    if isinstance(v, (int, float)):
-        n = int(v)
-        if 20000101 <= n <= 20991231:
-            return date.fromisoformat(f"{n:08d}"[:4] + "-" +
-                                      f"{n:08d}"[4:6] + "-" +
-                                      f"{n:08d}"[6:8])
+    if isinstance(v, (int, float)) and not isinstance(v, bool):
+        if int(v) == v and 20000101 <= v <= 20991231:
+            try:
+                return date.fromisoformat(f"{int(v):08d}"[:4] + "-" +
+                                          f"{int(v):08d}"[4:6] + "-" +
+                                          f"{int(v):08d}"[6:8])
+            except ValueError:
+                return None
         if 20000 <= v <= 80000:
             dt = from_excel(v)
             return dt.date() if isinstance(dt, datetime) else dt
         return None
-    s = str_clean(v)
+    s = str_clean(v).strip("\u200b\ufeff")
     if not s:
         return None
-    for fmt in ("%Y-%m-%d", "%d/%m/%Y", "%Y/%m/%d",
-                "%d-%m-%Y", "%d.%m.%Y", "%Y.%m.%d",
-                "%Y-%m-%d %H:%M:%S", "%d/%m/%Y %H:%M:%S"):
+    # Um campo textual AAAAMMDD ou carimbo da meia-noite.
+    m = re.fullmatch(r"(20\d{2})(0[1-9]|1[0-2])([0-2]\d|3[01])(?:[ T]00(?::?00){0,2})?", s)
+    if m:
+        try:
+            return date(int(m.group(1)), int(m.group(2)), int(m.group(3)))
+        except ValueError:
+            return None
+    # Excel pode armazenar o serial como TEXTO em vez de numero.
+    if re.fullmatch(r"\d{5}(?:[.,]0+)?", s):
+        try:
+            return dia(float(s.replace(",", ".")))
+        except (ValueError, OverflowError):
+            return None
+    for fmt in (
+        "%Y-%m-%d", "%d/%m/%Y", "%Y/%m/%d",
+        "%d-%m-%Y", "%d.%m.%Y", "%Y.%m.%d",
+        "%Y-%m-%d %H:%M:%S", "%d/%m/%Y %H:%M:%S",
+        "%Y/%m/%d %H:%M:%S", "%d-%m-%Y %H:%M:%S",
+        "%Y-%m-%d %H:%M", "%d/%m/%Y %H:%M",
+        "%Y/%m/%d %H:%M", "%d-%m-%Y %H:%M",
+        "%Y-%m-%dT%H:%M:%S", "%Y-%m-%dT%H:%M:%S.%f",
+    ):
         try:
             return datetime.strptime(s, fmt).date()
         except ValueError:
             pass
-    return None
+    # ISO com milissegundos, timezone, ou UTC Z (data do proprio campo).
+    try:
+        return datetime.fromisoformat(s.replace("Z", "+00:00")).date()
+    except ValueError:
+        return None
 
 
 def extrair(payload, campos):
@@ -152,23 +180,46 @@ def escolher_aba(wb, nome):
         if nome not in wb.sheetnames:
             raise RuntimeError("Aba nao encontrada. Disponiveis: " + ", ".join(wb.sheetnames))
         return wb[nome]
-    # Escolhe a aba com maior numero de linhas amostradas com data (A)
-    # e codigo de base (I), sem depender do cabecalho/idioma da planilha.
+    # Prioriza coincidencia entre data da coluna A e codigo de base da I.
+    # Diagnostico em caso de erro: mostra somente exemplos destas colunas,
+    # sem atribuir datas pelo nome do arquivo ou escolher base por aproximacao.
     melhor = None
     melhor_score = -1
+    diagnosticos = []
     for ws in wb.worksheets:
-        score = 0
+        score = datas_validas = codigos_validos = 0
+        exemplos = []
         for n, row in enumerate(ws.iter_rows(min_col=1, max_col=13, values_only=True)):
-            if n >= 1500:
+            if n >= 3000:
                 break
-            if dia(row[0]) is not None and codigo(row[8]):
+            d = dia(row[0])
+            cod = codigo(row[8])
+            datas_validas += int(d is not None)
+            codigos_validos += int(bool(cod))
+            if d is not None and cod:
                 score += 1
+            if len(exemplos) < 5 and any(str_clean(row[k]) for k in (0,8,9,12)):
+                exemplos.append(
+                    f"linha {n+1}: A={str(row[0])[:70]!r}, "
+                    f"I={str(row[8])[:70]!r}, "
+                    f"J={str(row[9])[:30]!r}, M={str(row[12])[:30]!r}"
+                )
+        diagnosticos.append(
+            f"ABA {ws.title!r}: coincidencias_A_I={score}, "
+            f"datas_A={datas_validas}, codigos_I={codigos_validos}\n  "
+            + "\n  ".join(exemplos)
+        )
         if score > melhor_score:
             melhor, melhor_score = ws, score
     if melhor is None or melhor_score <= 0:
         raise RuntimeError(
-            "Nenhuma aba tem datas validas na coluna A e codigos na coluna I. "
-            "Confira se o XLSX e o relatorio de volume de outlet (Resumo)."
+            "Nao encontrei datas validas na coluna A JUNTO de codigos de base "
+            "na coluna I. NENHUM DADO FOI ENVIADO.\n"
+            "Diagnostico das primeiras linhas da planilha:\n"
+            + "\n".join(diagnosticos)
+            + "\nConfira se a data operacional realmente esta em A e o "
+            "codigo numerico da base em I. Nao vou trocar colunas "
+            "automaticamente sem conferir o layout."
         )
     return melhor
 
