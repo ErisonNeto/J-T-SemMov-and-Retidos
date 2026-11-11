@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>J&amp;T | Sem Movimentação e Retidos</title>
-  <link rel="stylesheet" href="/static/style.css">
+  <link rel="stylesheet" href="/static/style.css?v=20261111-calendario-kpi">
 </head>
 <body>
   <header class="topbar shipping-style-header">
@@ -31,8 +31,8 @@
         </div>
       </div>
       <div class="filters">
-        <div class="filter"><label for="fDataInicial">Data inicial</label><select id="fDataInicial"></select></div>
-        <div class="filter"><label for="fDataFinal">Data final</label><select id="fDataFinal"></select></div>
+        <div class="filter"><label for="fDataInicial">Data inicial</label><input type="date" id="fDataInicial" lang="pt-BR" aria-label="Data inicial no calendário"></div>
+        <div class="filter"><label for="fDataFinal">Data final</label><input type="date" id="fDataFinal" lang="pt-BR" aria-label="Data final no calendário"></div>
         <div class="filter"><label for="fUf">UF</label><select id="fUf"><option value="">Todas</option></select></div>
         <div class="filter"><label for="fSc">S/C</label><select id="fSc"><option value="">Todos</option></select></div>
         <div class="filter wide"><label for="fBase">Base</label><select id="fBase"><option value="">Todas</option></select></div>
@@ -123,6 +123,6 @@
   </main>
 
   <div id="toast" class="toast"></div>
-  <script src="/static/app.js?v=20261104-conferencia-diaria"></script>
+  <script src="/static/app.js?v=20261111-calendario-kpi"></script>
 </body>
 </html>
