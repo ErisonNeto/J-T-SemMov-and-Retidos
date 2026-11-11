@@ -53,6 +53,34 @@
       <button id="downloadBtn" class="download">Baixar base &gt;3 dias</button>
     </section>
 
+    <section class="panel vol-panel" aria-label="Percentuais sobre volumetria principal">
+      <div class="panel-title">
+        <div>
+          <span class="section-kicker">KPIs SOBRE O VOLUME PRINCIPAL</span>
+          <h3>Sem Movimentação e Retidos (%)</h3>
+          <p>Denominador: quantidade coletada (J) + quantidade com saída para entrega (M), na mesma data e base do Orlean.</p>
+        </div>
+      </div>
+      <div class="vol-grid">
+        <article class="vol-card vol-denominador">
+          <span class="vol-eyebrow">Volumetria principal • J + M</span>
+          <strong class="vol-value" id="volTotal">—</strong>
+          <small id="volSplit">Aguardando volumetria...</small>
+        </article>
+        <article class="vol-card">
+          <span class="vol-eyebrow">SEM MOVIMENTAÇÃO • &gt;2 dias</span>
+          <strong class="vol-value" id="pctSemMov">—</strong>
+          <small id="pctSemMovInfo">Aguardando cálculo...</small>
+        </article>
+        <article class="vol-card">
+          <span class="vol-eyebrow">RETIDOS • &gt;3 dias</span>
+          <strong class="vol-value" id="pctRetidos">—</strong>
+          <small id="pctRetidosInfo">Aguardando cálculo...</small>
+        </article>
+      </div>
+      <p class="vol-aviso" id="volAviso" role="status"></p>
+    </section>
+
     <section class="kpi-grid" aria-label="Resultados da semana">
       <article class="kpi-card">
         <div class="kpi-head"><h3>Quantidade Total <span>(Acima de 3 dias)</span></h3><span id="meta3" class="meta" hidden></span></div>
