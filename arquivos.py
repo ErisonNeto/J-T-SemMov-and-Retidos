@@ -333,7 +333,7 @@ def carregar_volumetria() -> tuple[pd.DataFrame, str | None]:
                 "Nenhuma volumetria Outlet publicada no periodo. "
                 "Execute o importador dos tres arquivos atualizado."
             )
-            _vol_until = time.monotonic() + _CACHE_SECONDS
+            _vol_until = time.monotonic() + (_CACHE_SECONDS if not df.empty else 60)
         except Exception as exc:
             _vol_cache = pd.DataFrame(
                 columns=cols + ["sc", "uf"]
