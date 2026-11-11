@@ -4,11 +4,14 @@
 Uso:
   python importar_tres_auto.py --dry-run
   python importar_tres_auto.py
-Copie os XLSX para dados/entrada. O sistema detecta o dia operacional,
-exige as tres fontes para cada dia, importa Sem Mov/Retidos via JT API,
-gera o relatorio percentual de Outlet e salva controle de hashes.
-A gestao de colaboradores fica em dados/Gestao de colaboradores.xlsx
-(com nome original acentuado; veja core.GESTAO_PADRAO).
+Pastas recomendadas:
+  dados/sem_mov/      -> Excel de Sem Movimentacao
+  dados/retidos/       -> Excel de Retidos
+  dados/               -> Excel de Volume Outlet e Gestao de colaboradores.xlsx
+Opcionalmente os tres tipos tambem podem ficar em dados/entrada/.
+O sistema identifica os arquivos pelo nome, cruza a data operacional
+dos tres tipos, importa Sem Mov e Retidos pela JT API, gera relatorio
+percentual e registra hashes para nao reenviar cargas concluidas.
 """
 from __future__ import annotations
 
@@ -26,9 +29,12 @@ import importar_excel as core
 import calcular_percentuais_outlet as outlet
 
 ROOT = Path(__file__).resolve().parent
-ENTRADA = ROOT / "dados" / "entrada"
-RELATORIOS = ROOT / "dados" / "relatorios_outlet"
-CONTROLE = ROOT / "dados" / "controle_importacao_tres_fontes.json"
+DADOS = ROOT / "dados"
+ENTRADA = DADOS / "entrada"
+SEM_DIR = DADOS / "sem_mov"
+RET_DIR = DADOS / "retidos"
+RELATORIOS = DADOS / "relatorios_outlet"
+CONTROLE = DADOS / "controle_importacao_tres_fontes.json"
 TIPOS = ("sem_mov", "retidos", "outlet")
 
 
@@ -41,6 +47,46 @@ def tipo_arquivo(path: Path) -> str | None:
     if nome.startswith("estatistica de itens retidos na base") or "retido" in nome:
         return "retidos"
     return None
+
+
+def localizar_operacionais(entrada: Path) -> list[Path]:
+    """Busca as tres fontes na estrutura existente, sem incluir arquivos de apoio.
+
+    Nao faz rglob em dados/ inteiro: evita reimportar caches de ZIP,
+    planilhas de auditoria e relatorios gerados pelo proprio script.
+    O --entrada continua funcionando para uma pasta alternativa.
+    """
+    candidatos: list[Path] = []
+
+    if entrada.resolve() == DADOS.resolve():
+        # Outlet do dia fica diretamente em dados/.
+        candidatos.extend(
+            p for p in DADOS.glob("*.xlsx")
+            if p.is_file() and tipo_arquivo(p) == "outlet"
+        )
+        # Sem Mov e Retidos ficam nas pastas que o usuario ja utiliza.
+        for pasta, esperado in ((SEM_DIR, "sem_mov"), (RET_DIR, "retidos")):
+            if pasta.is_dir():
+                candidatos.extend(
+                    p for p in pasta.glob("*.xlsx")
+                    if p.is_file() and tipo_arquivo(p) == esperado
+                )
+        # Mantem compatibilidade com a entrada unificada anterior.
+        if ENTRADA.is_dir():
+            candidatos.extend(
+                p for p in ENTRADA.rglob("*.xlsx") if p.is_file()
+            )
+    else:
+        if not entrada.is_dir():
+            raise RuntimeError(f"Pasta de entrada nao existe: {entrada}")
+        candidatos.extend(
+            p for p in entrada.rglob("*.xlsx") if p.is_file()
+        )
+
+    return sorted(
+        {p.resolve() for p in candidatos if not p.name.startswith("~$")},
+        key=lambda p: (str(p.parent).lower(), p.name.lower()),
+    )
 
 
 def digest(path: Path) -> str:
@@ -95,18 +141,19 @@ def main() -> None:
     parser.add_argument("--substituir-dia", action="store_true",
                         help="Permite reimportar um arquivo diferente para data ja concluida.")
     parser.add_argument("--lote", type=int, default=100)
-    parser.add_argument("--entrada", default=str(ENTRADA))
+    parser.add_argument(
+        "--entrada", default=str(DADOS),
+        help="Pasta alternativa de entrada (padrao: dados, sem_mov e retidos separados).",
+    )
     args = parser.parse_args()
     if not 50 <= args.lote <= 3000:
         parser.error("--lote precisa ficar entre 50 e 3000")
     core.BATCH_SIZE = args.lote
 
     entrada = Path(args.entrada).expanduser().resolve()
-    entrada.mkdir(parents=True, exist_ok=True)
-    candidatos = sorted(
-        (p for p in entrada.rglob("*.xlsx") if p.is_file() and not p.name.startswith("~$")),
-        key=lambda p: p.name,
-    )
+    if entrada == DADOS.resolve():
+        DADOS.mkdir(parents=True, exist_ok=True)
+    candidatos = localizar_operacionais(entrada)
     tipos = [(p, tipo_arquivo(p)) for p in candidatos]
     desconhecidos = [p.name for p, t in tipos if t is None]
     if desconhecidos:
