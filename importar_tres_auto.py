@@ -10,7 +10,7 @@ Pastas recomendadas:
   dados/               -> Excel de Volume Outlet e Gestao de colaboradores.xlsx
 Opcionalmente os tres tipos tambem podem ficar em dados/entrada/.
 O sistema identifica os arquivos pelo nome, cruza a data operacional
-dos tres tipos, importa Sem Mov e Retidos pela JT API, gera relatorio
+dos tres tipos, aceita Outlet com multiplas datas, importa Sem Mov e Retidos pela JT API, gera relatorio
 percentual e registra hashes para nao reenviar cargas concluidas.
 """
 from __future__ import annotations
@@ -197,89 +197,139 @@ def main() -> None:
             flush=True,
         )
 
+        # Um XLSX de Outlet pode trazer muitos dias (por exemplo, 01 a 10/11).
+        # Cada data e separada automaticamente para cruzar com snapshots
+        # individuais; nao exigir exportacao de um arquivo por dia.
         agrupados: dict[str, dict[str, tuple[Path, str, dict | None]]] = defaultdict(dict)
         for path, tipo in arquivos:
             hash_arquivo = digest(path)
-            if tipo in ("sem_mov", "retidos"):
-                data_ref = core.data_referencia(path, tipo)
-                dias = [data_ref.isoformat()]
-                volume = None
-            else:
-                # Colunas A/I/J/M; somente codigos da Gestao publicada Orlean.
+            if tipo == "outlet":
                 volume = outlet.carregar_volume(path, gestores, aba=None)
-                dias = sorted({data for data, _ in volume})
-                if len(dias) != 1:
-                    raise RuntimeError(
-                        f"{path.name}: Outlet contem {len(dias)} datas operacionais: "
-                        + ", ".join(dias)
-                        + ". Exporte um XLSX por dia para cruzar com Sem Mov/Retidos."
-                    )
-
-            for dia in dias:
-                if tipo in agrupados[dia]:
-                    outro = agrupados[dia][tipo]
-                    if outro[1] != hash_arquivo:
-                        raise RuntimeError(
-                            f"Mais de um arquivo diferente do tipo {tipo} para {dia}: "
-                            f"{outro[0].name} e {path.name}. Deixe so o correto na entrada."
+                por_dia: dict[str, dict] = defaultdict(dict)
+                for (dt, cod), quantidades in volume.items():
+                    por_dia[dt][(dt, cod)] = quantidades
+                print(
+                    f"OUTLET: {path.name} | {len(por_dia)} data(s): "
+                    f"{', '.join(sorted(por_dia))}",
+                    flush=True,
+                )
+                for dia, volume_dia in por_dia.items():
+                    anterior = agrupados[dia].get("outlet")
+                    if anterior is None:
+                        agrupados[dia]["outlet"] = (
+                            path, hash_arquivo, volume_dia
                         )
+                        continue
+                    if anterior[2] == volume_dia:
+                        print(
+                            f"  OUTLET: repeticao sem alteracao para {dia} "
+                            f"({path.name}); ignorada."
+                        )
+                        continue
+                    # Se relatorios acumulados se sobrepoem, usa o arquivo
+                    # mais recente de forma explicita; nao SOMA valores
+                    # de arquivos que cobrem o mesmo dia.
+                    chave_atual = (path.stat().st_mtime_ns, path.name.lower())
+                    chave_antiga = (
+                        anterior[0].stat().st_mtime_ns,
+                        anterior[0].name.lower(),
+                    )
+                    escolhido = path if chave_atual > chave_antiga else anterior[0]
+                    print(
+                        f"  AVISO: Outlet com dados divergentes em {dia}: "
+                        f"{anterior[0].name} x {path.name}. "
+                        f"Usando {escolhido.name} (modificacao mais recente).",
+                        flush=True,
+                    )
+                    if escolhido == path:
+                        agrupados[dia]["outlet"] = (
+                            path, hash_arquivo, volume_dia
+                        )
+                continue
+
+            # Sem Mov e Retidos sao snapshots: detecta data da propria
+            # fonte, independentemente da data/hora do download.
+            dia = core.data_referencia(path, tipo).isoformat()
+            anterior = agrupados[dia].get(tipo)
+            if anterior is not None:
+                if anterior[1] == hash_arquivo:
                     print(f"DUPLICATA IDENTICA ignorada: {path.name}")
                     continue
-                agrupados[dia][tipo] = (path, hash_arquivo, volume)
+                raise RuntimeError(
+                    f"Dois arquivos diferentes de {tipo} para {dia}: "
+                    f"{anterior[0].name} e {path.name}. "
+                    "Mantenha somente o snapshot correto."
+                )
+            agrupados[dia][tipo] = (path, hash_arquivo, None)
 
         if not agrupados:
             print("Nenhum dia operacional detectado.")
             return
 
-        for dia, trio in sorted(agrupados.items()):
-            faltam = [t for t in TIPOS if t not in trio]
-            print(f"\nDIA {dia}: {', '.join(t for t in TIPOS if t in trio)}")
-            if faltam:
-                print("INCOMPLETO: faltam " + ", ".join(faltam) + ". Nao importa este dia.")
-                continue
+        datas_outlet = sorted(
+            dia for dia, trio in agrupados.items() if "outlet" in trio
+        )
+        print(
+            f"DIAS DO OUTLET: {len(datas_outlet)} | "
+            f"{datas_outlet[0] if datas_outlet else 'nenhum'} a "
+            f"{datas_outlet[-1] if datas_outlet else 'nenhum'}",
+            flush=True,
+        )
+        print(
+            "Sem Mov e Retidos sem XLSX nesta pasta podem vir do "
+            "historico ja existente no PostgreSQL; "
+            "o sistema nao cria numeradores ficticios.",
+            flush=True,
+        )
 
-            # Preflight antes de QUALQUER gravacao.
+        # Valida e importa apenas os snapshots NOVOS disponiveis.
+        # Dias historicos somente com Outlet nao impedem o processamento.
+        for dia, trio in sorted(agrupados.items()):
+            presentes = ", ".join(t for t in TIPOS if t in trio)
+            print(f"\nDIA {dia}: {presentes}", flush=True)
+
             for tipo in ("retidos", "sem_mov"):
+                if tipo not in trio:
+                    print(
+                        f"  {tipo}: sem novo XLSX; "
+                        "consultar historico do PostgreSQL."
+                    )
+                    continue
                 path, hash_arquivo, _ = trio[tipo]
                 k = f"{dia}|{tipo}"
                 antigo = cargas.get(k)
                 if antigo and antigo.get("sha256") == hash_arquivo:
                     print(f"  {tipo}: ja concluido; nao sera reenviado.")
-                elif antigo and not args.substituir_dia:
-                    raise RuntimeError(
-                        f"{tipo} {dia} ja consta como concluido com OUTRO arquivo. "
-                        "Revise os arquivos e use --substituir-dia somente se for corrigir o dia."
-                    )
-                else:
-                    print(f"  Validando {tipo}: {path.name}", flush=True)
-                    linhas, pedidos, _, sem_gestao = core.processar_arquivo(
-                        path, tipo, __import__("datetime").date.fromisoformat(dia),
-                        gestao_import, None, True
-                    )
-                    print(
-                        f"  OK {tipo}: {linhas:,} linhas | {pedidos:,} pedidos "
-                        f"| {sem_gestao:,} sem Gestao"
-                    )
-
-            if args.dry_run:
-                print("  DRY-RUN OK. Nenhum dado gravado.")
-                continue
-
-            # Importacao por tipo e checkpoint. Em falha, upsert pode ser
-            # executado novamente: jamais marcar um arquivo incompleto como OK.
-            for tipo in ("retidos", "sem_mov"):
-                path, hash_arquivo, _ = trio[tipo]
-                k = f"{dia}|{tipo}"
-                if cargas.get(k, {}).get("sha256") == hash_arquivo:
                     continue
+                if antigo and not args.substituir_dia:
+                    raise RuntimeError(
+                        f"{tipo} {dia} ja foi concluido com OUTRO arquivo. "
+                        "Use --substituir-dia somente se for corrigir a carga."
+                    )
+
+                print(f"  Validando {tipo}: {path.name}", flush=True)
+                linhas, pedidos, _, sem_gestao = core.processar_arquivo(
+                    path, tipo, __import__("datetime").date.fromisoformat(dia),
+                    gestao_import, None, True,
+                )
+                print(
+                    f"  OK {tipo}: {linhas:,} linhas | {pedidos:,} pedidos "
+                    f"| {sem_gestao:,} sem Gestao",
+                    flush=True,
+                )
+                if args.dry_run:
+                    continue
+
+                # Upsert idempotente; checkpoint somente apos a verificacao
+                # de registros no banco.
                 linhas, pedidos, enviados, _ = core.processar_arquivo(
                     path, tipo, __import__("datetime").date.fromisoformat(dia),
-                    gestao_import, session, False
+                    gestao_import, session, False,
                 )
                 no_banco = db_contagem(session, tipo, dia)
                 if no_banco <= 0:
                     raise RuntimeError(
-                        f"{tipo} {dia}: nao encontrei registros no PostgreSQL apos o envio."
+                        f"{tipo} {dia}: nenhum registro no PostgreSQL apos envio."
                     )
                 cargas[k] = {
                     "sha256": hash_arquivo, "arquivo": path.name,
@@ -290,40 +340,100 @@ def main() -> None:
                 gravar_controle(controle)
                 print(
                     f"  IMPORTADO {tipo}: {enviados:,} upserts; "
-                    f"PostgreSQL {no_banco:,} linhas no dia {dia}.", flush=True
+                    f"{no_banco:,} linhas em {dia} no PostgreSQL.",
+                    flush=True,
                 )
 
-            _, _, volume = trio["outlet"]
-            assert volume is not None
-            numeradores, cobertura = outlet.carregar_indicadores(session, volume)
-            for tipo in ("sem_mov", "retidos"):
-                if (dia, tipo) not in cobertura:
-                    raise RuntimeError(
-                        f"Faltam dados do indicador {tipo} de {dia} "
-                        "para as bases Orlean encontradas no volume."
+        if args.dry_run:
+            print(
+                "\nDRY-RUN OK: nenhum dado foi gravado. "
+                "O historico dos dias sem XLSX sera conferido ao "
+                "executar a carga definitiva.",
+                flush=True,
+            )
+            return
+
+        # Consulta numeradores reais de todos os dias em uma so passagem.
+        # Nunca transforma falta de snapshot em zero ou percentual de 0%.
+        volume_total: dict = {}
+        for dia, trio in sorted(agrupados.items()):
+            if "outlet" in trio:
+                volume_total.update(trio["outlet"][2] or {})
+
+        if volume_total:
+            numeradores, cobertura = outlet.carregar_indicadores(
+                session, volume_total
+            )
+            RELATORIOS.mkdir(parents=True, exist_ok=True)
+            completos = 0
+            for dia, trio in sorted(agrupados.items()):
+                if "outlet" not in trio:
+                    continue
+                faltam = [
+                    t for t in ("sem_mov", "retidos")
+                    if (dia, t) not in cobertura
+                ]
+                if faltam:
+                    print(
+                        f"  DIA {dia}: SEM RELATORIO PERCENTUAL: "
+                        f"nao ha snapshot no PostgreSQL para "
+                        f"{', '.join(faltam)}. Nao usar 0% como resultado.",
+                        flush=True,
                     )
-            visoes = {
-                nome: outlet.agregar(volume, gestores, numeradores, cobertura, nome)
+                    continue
+
+                path, hash_arquivo, volume_dia = trio["outlet"]
+                visoes = {
+                    nome: outlet.agregar(
+                        volume_dia, gestores, numeradores, cobertura, nome
+                    )
+                    for nome in ("Orlean", "S-C", "Bases")
+                }
+                saida = RELATORIOS / f"percentuais_outlet_{dia}.xlsx"
+                outlet.salvar_excel(saida, visoes)
+                cargas[f"{dia}|outlet"] = {
+                    "sha256": hash_arquivo, "arquivo": path.name,
+                    "relatorio": str(saida),
+                    "concluido_em": datetime.now().isoformat(timespec="seconds"),
+                }
+                gravar_controle(controle)
+                completos += 1
+                for row in visoes["Orlean"]:
+                    _, _, _, _, j, m, total, sem, pct_sem, ret, pct_ret = row
+                    def pct(x):
+                        return "SEM DADO" if x is None else f"{100*x:.2f}%"
+                    print(
+                        f"  ORLEAN {dia}: J={j:,} + M={m:,} = {total:,} | "
+                        f"Sem Mov >2: {sem:,} ({pct(pct_sem)}) | "
+                        f"Retidos >3: {ret:,} ({pct(pct_ret)})",
+                        flush=True,
+                    )
+                print(f"  RELATORIO: {saida}", flush=True)
+
+            # Relatorio historico unico do XLSX acumulado. Dias sem
+            # snapshot deixam as colunas do indicador em branco.
+            visoes_historico = {
+                nome: outlet.agregar(
+                    volume_total, gestores, numeradores, cobertura, nome
+                )
                 for nome in ("Orlean", "S-C", "Bases")
             }
-            RELATORIOS.mkdir(parents=True, exist_ok=True)
-            saida = RELATORIOS / f"percentuais_outlet_{dia}.xlsx"
-            outlet.salvar_excel(saida, visoes)
-            cargas[f"{dia}|outlet"] = {
-                "sha256": trio["outlet"][1], "arquivo": trio["outlet"][0].name,
-                "relatorio": str(saida),
-                "concluido_em": datetime.now().isoformat(timespec="seconds"),
-            }
-            gravar_controle(controle)
-            for row in visoes["Orlean"]:
-                _, _, _, _, j, m, total, sem, pct_sem, ret, pct_ret = row
-                def pct(x): return "N/D" if x is None else f"{100*x:.2f}%"
-                print(
-                    f"  ORLEAN {dia}: J={j:,} + M={m:,} = {total:,} | "
-                    f"Sem Mov >2: {sem:,} ({pct(pct_sem)}) | "
-                    f"Retidos >3: {ret:,} ({pct(pct_ret)})"
-                )
-            print(f"  RELATORIO: {saida}")
+            datas = sorted({d for d, _ in volume_total})
+            geral = RELATORIOS / (
+                f"percentuais_outlet_{datas[0]}_a_{datas[-1]}.xlsx"
+            )
+            outlet.salvar_excel(geral, visoes_historico)
+            print(
+                f"  HISTORICO: {geral} | "
+                f"{completos}/{len(datas)} dia(s) com ambas as fontes.",
+                flush=True,
+            )
+        else:
+            print(
+                "Sem planilha de Outlet: snapshots operacionais processados; "
+                "relatorio percentual nao gerado.",
+                flush=True,
+            )
         print("\nFINALIZADO. Estado salvo em:", CONTROLE)
         print(
             "NOTA: Retidos >3 de aging nao comprova vencimento 3 dias apos prazo SLA. "
