@@ -361,6 +361,26 @@ def main() -> None:
                 volume_total.update(trio["outlet"][2] or {})
 
         if volume_total:
+            # Publica denominador real J+M para os cards do Render.
+            # Uma tabela exclusiva evita misturar volume com remessas.
+            # Em falha, o Excel ainda pode ser gerado, mas o dashboard
+            # exibira "Sem volumetria" (nunca percentual inventado).
+            try:
+                enviados_vol = outlet.publicar_volume_postgres(
+                    session, volume_total, lote=min(args.lote, 200)
+                )
+                print(
+                    f"VOLUMETRIA PUBLICADA: {enviados_vol:,} bases-dia. "
+                    "Indicadores online disponiveis apos cache/deploy.",
+                    flush=True,
+                )
+            except Exception as exc:
+                print(
+                    "ATENCAO: nao publiquei a volumetria no PostgreSQL. "
+                    f"Percentuais online indisponiveis: {exc}",
+                    file=sys.stderr,
+                    flush=True,
+                )
             numeradores, cobertura = outlet.carregar_indicadores(
                 session, volume_total
             )
