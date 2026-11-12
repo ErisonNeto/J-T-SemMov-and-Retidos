@@ -28,6 +28,7 @@ from openpyxl.styles import Alignment, Font, PatternFill
 from openpyxl.utils.datetime import from_excel
 
 import importar_excel as core
+from exclusoes import sc_excluido
 
 ROOT = Path(__file__).resolve().parent
 
@@ -168,7 +169,11 @@ def gestao_publicada(session):
     saida = {}
     for r in rows:
         cod = codigo(r.get("base_codigo"))
-        if cod and "ORLEAN" in str_clean(r.get("rm")).upper():
+        if (
+            cod
+            and "ORLEAN" in str_clean(r.get("rm")).upper()
+            and not sc_excluido(r.get("sc"))
+        ):
             saida[cod] = {k: str_clean(r.get(k)) for k in campos}
     if not saida:
         raise RuntimeError("Nenhuma base de Orlean encontrada na Gestao publicada.")
