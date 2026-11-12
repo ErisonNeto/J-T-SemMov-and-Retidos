@@ -9,6 +9,7 @@ from fastapi.staticfiles import StaticFiles
 
 from config import METAS
 from arquivos import carregar, status_fonte, carregar_volumetria
+from exclusoes import sc_excluido
 
 BASE_DIR = Path(__file__).resolve().parent
 app = FastAPI(title='J&T | Sem Movimentação e Retidos — PostgreSQL')
@@ -26,7 +27,10 @@ def variacao(atual, anterior):
 def somente_orlean(df):
     if df.empty:
         return df.copy()
-    return df[df['rm'].astype(str).str.contains('ORLEAN', case=False, na=False)].copy()
+    return df[
+        df['rm'].astype(str).str.contains('ORLEAN', case=False, na=False)
+        & ~df['sc'].map(sc_excluido)
+    ].copy()
 
 
 def filtrar(df, indicador, uf='', sc='', base=''):
