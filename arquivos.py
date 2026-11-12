@@ -15,6 +15,7 @@ import pandas as pd
 import requests
 
 from config import JANELA_EVOLUCAO_DIAS, TIMEZONE
+from exclusoes import sc_excluido
 
 DIMENSOES = [
     "indicador", "data", "base_codigo", "base_nome", "uf", "rm", "sc",
@@ -122,6 +123,7 @@ def _consultar_resumo() -> pd.DataFrame:
                 f"JT API Gestao HTTP {gres.status_code}: {gres.text[:400]}"
             )
         gestao = {}
+        bases_excluidas = 0
         for row in _extrair_linhas(gres.json()):
             if isinstance(row, dict):
                 cod = str(row.get("base_codigo") or "").strip()
@@ -130,6 +132,9 @@ def _consultar_resumo() -> pd.DataFrame:
                 cols = ("base_codigo", "base_nome", "rm", "sc", "uf", "regional")
                 origem = dict(zip(cols, row))
                 cod = str(origem.get("base_codigo") or "").strip()
+            if sc_excluido(origem.get("sc")):
+                bases_excluidas += 1
+                continue
             if cod and "ORLEAN" in str(origem.get("rm") or "").upper():
                 gestao[cod] = {
                     field: str(origem.get(field) or "").strip()
@@ -142,6 +147,11 @@ def _consultar_resumo() -> pd.DataFrame:
                 "nao farei a consulta nacional completa."
             )
         codigos = sorted(gestao)
+        _status["bases_excluidas_sc"] = bases_excluidas
+        if bases_excluidas:
+            print(f"[SEM MOV/RETIDOS] S/C Darley excluido: {bases_excluidas} base(s) fora dos indicadores.", flush=True)
+        else:
+            print("[SEM MOV/RETIDOS] AVISO: Darley nao encontrado na coluna S/C da Gestao publicada.", flush=True)
 
         # GROUP BY enxuto. Exclui motivos e nomes repetidos por remessa;
         # recupera os atributos oficiais pela Gestao de 146 bases.
@@ -335,7 +345,10 @@ def carregar_volumetria() -> tuple[pd.DataFrame, str | None]:
                     raise RuntimeError("Gestao publicada vazia")
                 for campo in gc:
                     g[campo] = g[campo].fillna("").astype(str).str.strip()
-                g = g[g["rm"].str.contains("ORLEAN", case=False, na=False)]
+                g = g[
+                    g["rm"].str.contains("ORLEAN", case=False, na=False)
+                    & ~g["sc"].map(sc_excluido)
+                ]
                 g = g.drop_duplicates(subset=["base_codigo"])
                 df = df.merge(g[["base_codigo", "sc", "uf"]], on="base_codigo", how="inner")
 
