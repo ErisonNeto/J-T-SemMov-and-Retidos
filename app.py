@@ -38,13 +38,20 @@ def filtrar(df, indicador, uf='', sc='', base=''):
     return df.copy()
 
 
-def quantidades(df):
+def limite_indicador(indicador):
+    """Sem Mov >2 dias = 3+; Retidos >3 dias = 4+."""
+    return 2 if indicador == 'sem_mov' else 3
+
+
+def quantidades(df, indicador):
     if df.empty:
         return {'acima_3': 0, 'acima_10': 0}
     aging = df['aging_valor'].fillna(0)
     pedidos = df['pedidos'].fillna(0)
     return {
-        'acima_3': int(pedidos[aging > 3].sum()),
+        # Campo historico acima_3 mantido por compatibilidade com frontend:
+        # o limiar depende do indicador e e exibido com o rotulo correto.
+        'acima_3': int(pedidos[aging > limite_indicador(indicador)].sum()),
         'acima_10': int(pedidos[aging > 10].sum()),
     }
 
@@ -152,11 +159,11 @@ def percentuais_da_volumetria(raw, volume, inicio, fim, uf='', sc='', base='', e
         )
     return saida
 
-def ranking(df, columns, limit):
+def ranking(df, columns, limit, indicador):
     if df.empty:
         return []
     df = df.assign(
-        q3=df.pedidos.where(df.aging_valor > 3, 0),
+        q3=df.pedidos.where(df.aging_valor > limite_indicador(indicador), 0),
         q10=df.pedidos.where(df.aging_valor > 10, 0),
     )
     g = df.groupby(columns, dropna=False)[['q3', 'q10']].sum().reset_index()
@@ -218,8 +225,8 @@ def rotulo_semana(inicio, fim):
     return None
 
 
-def aging_distribuicao(df):
-    df = df[df.aging_valor > 3]
+def aging_distribuicao(df, indicador):
+    df = df[df.aging_valor > limite_indicador(indicador)]
     if df.empty:
         return []
     g = df.groupby('aging_valor').pedidos.sum().sort_index()
@@ -310,8 +317,8 @@ def dashboard(
     anterior_df = df[(df.data >= anterior_inicio_iso) & (df.data <= anterior_fim_iso)]
     final_df = df[df.data == fim_iso]
 
-    q_atual = quantidades(periodo_df)
-    q_anterior = quantidades(anterior_df)
+    q_atual = quantidades(periodo_df, indicador)
+    q_anterior = quantidades(anterior_df, indicador)
 
     metrics = {}
     for c in ('3', '10'):
@@ -328,13 +335,13 @@ def dashboard(
         }
 
     evo = [
-        {'data': dt, **quantidades(g)}
+        {'data': dt, **quantidades(g, indicador)}
         for dt, g in periodo_df.groupby('data', sort=True)
     ]
 
-    bases = ranking(periodo_df, ['base_codigo', 'base_nome', 'sc'], 20)
+    bases = ranking(periodo_df, ['base_codigo', 'base_nome', 'sc'], 20, indicador)
     for b in bases:
-        prev = quantidades(anterior_df[anterior_df.base_codigo == b['base_codigo']])['acima_3'] if anterior_completo else None
+        prev = quantidades(anterior_df[anterior_df.base_codigo == b['base_codigo']], indicador)['acima_3'] if anterior_completo else None
         b['variacao'] = variacao(b['acima_3'], prev) if atual_completo else None
 
     # Valores de Outlet permanecem independentes do indicador selecionado:
@@ -363,9 +370,9 @@ def dashboard(
         },
         'metrics': metrics,
         'evolucao': evo,
-        'aging': aging_distribuicao(final_df),
+        'aging': aging_distribuicao(final_df, indicador),
         'top_bases': bases,
-        'top_sc': ranking(periodo_df[periodo_df.sc != ''], ['sc'], 20),
+        'top_sc': ranking(periodo_df[periodo_df.sc != ''], ['sc'], 20, indicador),
         'motivos': [],
         'ultima_carga': disponiveis[-1] if disponiveis else None,
         'fonte': status_fonte(),
@@ -426,7 +433,7 @@ def snapshot(
             item[f'd{age}'] += linhas
         elif age > 4:
             item['acima4'] += linhas
-        if age > 3:
+        if age > limite_indicador(indicador):
             item['acima3'] += linhas
             item['pedidos_acima3'] += pedidos
 
@@ -439,9 +446,10 @@ def snapshot(
         'indicador': indicador, 'data': dia, 'bases': lista, 'total': total,
         'sem_remessas': not bool(lista),
         'aviso': (
-            'Retrato de um único dia. Contagem de remessas (COUNT), não pedidos '
-            'e não a soma semanal. Só compare com planilha da mesma data, '
-            'mesma lista de bases e mesmas faixas de dias.'
+            'Retrato de um único dia. Contagem de remessas (COUNT), não pedidos. '
+            + ('Sem Mov: 3 dias ou mais. ' if indicador == 'sem_mov'
+               else 'Retidos: 4 dias ou mais. ')
+            + 'Só compare com planilha da mesma data, bases e faixas de dias.'
         ),
     }
 
@@ -463,7 +471,7 @@ def download(
     fim_iso = fim_data.isoformat()
     df = filtrar(raw, indicador, uf, sc, base)
     df = df[(df.data >= inicio_iso) & (df.data <= fim_iso)]
-    limite = 3 if corte == '3' else 10
+    limite = limite_indicador(indicador) if corte == '3' else 10
     df = df[df.aging_valor > limite]
 
     def stream():
