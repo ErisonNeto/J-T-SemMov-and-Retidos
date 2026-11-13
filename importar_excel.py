@@ -7,6 +7,7 @@ import os
 import re
 from itertools import chain, islice
 import shutil
+import time
 import unicodedata
 import zipfile
 from datetime import date, datetime, timedelta
@@ -1175,6 +1176,13 @@ def testar_api(session: requests.Session) -> None:
 
 
 def enviar_lote(session: requests.Session, registros: list[dict]) -> None:
+    """Importacao idempotente com retry limitado para falhas transitorias.
+
+    Cloudflare 502/503/504 ou ReadTimeout podem ocorrer DEPOIS de o lote
+    ter sido gravado no servidor. A chave do upsert garante que reenviar o
+    MESMO lote nao incrementa a contagem de remessas no PostgreSQL.
+    Nao repetimos respostas 400/401/403, pois sao erros permanentes.
+    """
     if not registros:
         return
     payload = {
@@ -1184,15 +1192,45 @@ def enviar_lote(session: requests.Session, registros: list[dict]) -> None:
         "criar_tabela": False,
         "adicionar_colunas": False,
     }
-    resp = session.post(
-        f"{API_URL}/import",
-        headers=_headers(),
-        json=payload,
-        timeout=API_TIMEOUT,
-    )
-    if not resp.ok:
-        raise RuntimeError(f"JT API retornou HTTP {resp.status_code}: {resp.text[:1500]}")
-
+    tentativas = max(1, min(int(os.getenv("JT_IMPORT_RETRIES", "5")), 8))
+    codigos_transitorios = {429, 502, 503, 504, 520, 522, 524}
+    for tentativa in range(1, tentativas + 1):
+        try:
+            resp = session.post(
+                f"{API_URL}/import",
+                headers=_headers(),
+                json=payload,
+                timeout=API_TIMEOUT,
+            )
+            if resp.ok:
+                return
+            if resp.status_code not in codigos_transitorios:
+                raise RuntimeError(
+                    f"JT API retornou HTTP {resp.status_code}: "
+                    f"{resp.text[:700]}"
+                )
+            motivo = f"HTTP {resp.status_code}"
+        except (
+            requests.exceptions.Timeout,
+            requests.exceptions.ConnectionError,
+        ) as exc:
+            motivo = f"{type(exc).__name__}: {str(exc)[:200]}"
+        if tentativa == tentativas:
+            raise RuntimeError(
+                f"JT API indisponivel apos {tentativas} tentativa(s) "
+                f"de envio do mesmo lote ({len(registros)} remessas). "
+                f"Ultima falha: {motivo}. "
+                "Os lotes anteriores permanecem gravados; "
+                "repetir a carga usa UPSERT e nao duplica remessas."
+            )
+        pausa = min(2 ** tentativa, 20)
+        print(
+            f"  JT API instavel ({motivo}). Tentativa "
+            f"{tentativa}/{tentativas}; reenvio idempotente "
+            f"do lote em {pausa}s...",
+            flush=True,
+        )
+        time.sleep(pausa)
 
 
 def verificar_layout_sem_mov_atual(path: Path) -> tuple[bool, str]:
@@ -1259,6 +1297,7 @@ def processar_arquivo(
 
     lote: dict[str, dict] = {}
     linhas = pedidos = enviados = sem_gestao = 0
+    proximo_progresso = 10000
 
     # Segurança: antes de enviar qualquer lote, valida uma amostra do cruzamento
     # com Gestão. Isso detecta layout que apontou a coluna errada como código da base.
@@ -1315,6 +1354,13 @@ def processar_arquivo(
                 assert session is not None
                 enviar_lote(session, valores)
             enviados += len(valores)
+            if not dry_run and enviados >= proximo_progresso:
+                print(
+                    f"  ENVIO {indicador} {data_ref}: "
+                    f"{enviados:,} remessas enviadas em lotes.",
+                    flush=True,
+                )
+                proximo_progresso = enviados + 10000
             lote.clear()
 
     if lote:
