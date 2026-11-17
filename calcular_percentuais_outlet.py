@@ -18,6 +18,7 @@ from __future__ import annotations
 import argparse
 import re
 import sys
+import unicodedata
 from collections import defaultdict
 from datetime import date, datetime
 from pathlib import Path
@@ -25,6 +26,7 @@ from pathlib import Path
 import requests
 from openpyxl import Workbook, load_workbook
 from openpyxl.styles import Alignment, Font, PatternFill
+from openpyxl.utils import get_column_letter
 from openpyxl.utils.datetime import from_excel
 
 import importar_excel as core
@@ -180,82 +182,177 @@ def gestao_publicada(session):
     return saida
 
 
-def escolher_aba(wb, nome):
-    if nome:
-        if nome not in wb.sheetnames:
-            raise RuntimeError("Aba nao encontrada. Disponiveis: " + ", ".join(wb.sheetnames))
-        return wb[nome]
-    # Prioriza coincidencia entre data da coluna A e codigo de base da I.
-    # Diagnostico em caso de erro: mostra somente exemplos destas colunas,
-    # sem atribuir datas pelo nome do arquivo ou escolher base por aproximacao.
-    melhor = None
-    melhor_score = -1
+
+def _nome_cabecalho(valor):
+    s = unicodedata.normalize("NFKD", str_clean(valor))
+    s = "".join(c for c in s if not unicodedata.combining(c))
+    return re.sub(r"[^a-z0-9]+", " ", s.lower()).strip()
+
+
+def _campo_outlet(valor):
+    """Identifica semantica; recebida NAO e coletada nem saida para entrega."""
+    s = _nome_cabecalho(valor)
+    if s in ("data", "data operacional", "data do relatorio", "data de referencia"):
+        return "data"
+    if ("codigo" in s or "code" in s) and any(
+        termo in s for termo in ("base", "filial", "estacao")
+    ) and not any(termo in s for termo in ("remetente", "origem", "destino")):
+        return "base_codigo"
+    if (
+        any(termo in s for termo in ("coletad", "coleta", "collected", "pickup"))
+        and any(termo in s for termo in ("quantidade", "qtd", "volume", "pacotes", "orders"))
+        and not any(termo in s for termo in ("percentual", "taxa", "valor", "tax"))
+    ):
+        return "coletada"
+    if (
+        (("saida" in s and "entrega" in s) or "out for delivery" in s)
+        and not any(termo in s for termo in ("percentual", "taxa", "valor", "tax"))
+    ):
+        return "saida_entrega"
+    return None
+
+
+def _identificar_layout_outlet(ws):
+    """Encontra as quatro colunas pelos CABECALHOS, nao por posicao."""
     diagnosticos = []
-    for ws in wb.worksheets:
-        # Alguns XLSX exportados pelo sistema J&T declaram a dimensao
-        # A1:M1 mesmo quando a worksheet possui milhares de linhas.
-        # Em read_only=True o openpyxl confia nessa dimensao e le so
-        # o cabecalho. reset_dimensions() obriga a varrer as linhas reais.
-        # Continua usando EXATAMENTE A (data) e I (codigo).
+    # Limite generoso para layouts em que surgiram colunas novas.
+    for linha_num, row in enumerate(
+        ws.iter_rows(min_row=1, max_row=6, min_col=1, max_col=80, values_only=True),
+        start=1,
+    ):
+        colunas = {}
+        ambiguos = set()
+        for idx, valor in enumerate(row):
+            if not str_clean(valor):
+                continue
+            campo = _campo_outlet(valor)
+            if campo:
+                if campo in colunas:
+                    ambiguos.add(campo)
+                else:
+                    colunas[campo] = idx
+        if ambiguos:
+            diagnosticos.append(
+                f"linha {linha_num}: cabecalhos ambiguos para {', '.join(sorted(ambiguos))}"
+            )
+            continue
+        esperados = ("data", "base_codigo", "coletada", "saida_entrega")
+        if all(k in colunas for k in esperados):
+            return {"cabecalho": linha_num, **{k: colunas[k] for k in esperados}}, []
+        if colunas:
+            faltando = [k for k in esperados if k not in colunas]
+            diagnosticos.append(
+                f"linha {linha_num}: reconhecidos "
+                + ", ".join(
+                    f"{k}={get_column_letter(v+1)}"
+                    for k, v in sorted(colunas.items())
+                ) + "; faltando " + ", ".join(faltando)
+            )
+
+    cab = next(ws.iter_rows(min_row=1, max_row=1, min_col=1, max_col=80, values_only=True))
+    nomes = [
+        f"{get_column_letter(i+1)}={str_clean(v)[:85]!r}"
+        for i, v in enumerate(cab) if str_clean(v)
+    ]
+    diagnosticos.append("CABECALHOS DA PLANILHA:\n  " + "\n  ".join(nomes))
+    return None, diagnosticos
+
+
+def escolher_aba(wb, nome):
+    """Mantem compatibilidade com layout anterior e novos exports seguros."""
+    abas = [wb[nome]] if nome and nome in wb.sheetnames else list(wb.worksheets)
+    if nome and nome not in wb.sheetnames:
+        raise RuntimeError(
+            "Aba nao encontrada. Disponiveis: " + ", ".join(wb.sheetnames)
+        )
+    melhor = None
+    melhor_qtd = -1
+    relatorios = []
+    for ws in abas:
+        # XLSX do JMS frequentemente indica dimensao A1:A1 indevidamente.
         if hasattr(ws, "reset_dimensions"):
-            dimensao_informada = ws.calculate_dimension()
+            dimensao = ws.calculate_dimension()
             if ws.max_row is None or ws.max_row <= 1:
                 ws.reset_dimensions()
                 print(
                     f"  Outlet: ignorando dimensao Excel incorreta "
-                    f"{dimensao_informada!r} na aba {ws.title!r}; "
+                    f"{dimensao!r} na aba {ws.title!r}; "
                     "lendo as linhas reais do XML.",
                     flush=True,
                 )
-        score = datas_validas = codigos_validos = 0
-        exemplos = []
-        for n, row in enumerate(ws.iter_rows(min_col=1, max_col=13, values_only=True)):
-            if n >= 3000:
-                break
-            d = dia(row[0])
-            cod = codigo(row[8])
-            datas_validas += int(d is not None)
-            codigos_validos += int(bool(cod))
-            if d is not None and cod:
-                score += 1
-            if len(exemplos) < 5 and any(str_clean(row[k]) for k in (0,8,9,12)):
-                exemplos.append(
-                    f"linha {n+1}: A={str(row[0])[:70]!r}, "
-                    f"I={str(row[8])[:70]!r}, "
-                    f"J={str(row[9])[:30]!r}, M={str(row[12])[:30]!r}"
-                )
-        diagnosticos.append(
-            f"ABA {ws.title!r}: coincidencias_A_I={score}, "
-            f"datas_A={datas_validas}, codigos_I={codigos_validos}\n  "
-            + "\n  ".join(exemplos)
+        layout, diagnosticos = _identificar_layout_outlet(ws)
+        if layout is None:
+            relatorios.append(f"ABA {ws.title!r}:\n" + "\n".join(diagnosticos))
+            continue
+
+        ncol = max(layout[k] for k in ("data", "base_codigo", "coletada", "saida_entrega")) + 1
+        validas = 0
+        for linha_num, row in enumerate(
+            ws.iter_rows(min_row=1, max_row=210, min_col=1, max_col=ncol,
+                         values_only=True),
+            start=1,
+        ):
+            if linha_num <= layout["cabecalho"]:
+                continue
+            dt = dia(row[layout["data"]])
+            cod = codigo(row[layout["base_codigo"]])
+            if dt is not None and cod:
+                try:
+                    numero(row[layout["coletada"]])
+                    numero(row[layout["saida_entrega"]])
+                    validas += 1
+                except (TypeError, ValueError):
+                    pass
+        relatorios.append(
+            f"ABA {ws.title!r}: {validas} linhas validas na amostra | "
+            + ", ".join(
+                f"{k}={get_column_letter(layout[k]+1)}"
+                for k in ("data", "base_codigo", "coletada", "saida_entrega")
+            )
         )
-        if score > melhor_score:
-            melhor, melhor_score = ws, score
-    if melhor is None or melhor_score <= 0:
+        if validas > melhor_qtd:
+            melhor, melhor_qtd = (ws, layout), validas
+
+    if melhor is None or melhor_qtd <= 0:
         raise RuntimeError(
-            "Nao encontrei datas validas na coluna A JUNTO de codigos de base "
-            "na coluna I. NENHUM DADO FOI ENVIADO.\n"
-            "Diagnostico das primeiras linhas da planilha:\n"
-            + "\n".join(diagnosticos)
-            + "\nConfira se a data operacional realmente esta em A e o "
-            "codigo numerico da base em I. Nao vou trocar colunas "
-            "automaticamente sem conferir o layout."
+            "Nao consegui identificar com SEGURANCA as colunas de data, "
+            "codigo de base, quantidade coletada e saida para entrega. "
+            "NENHUM DADO FOI ENVIADO.\n"
+            + "\n".join(relatorios)
+            + "\nImportante: 'Quantidade recebida' NAO substitui "
+            "'Saida para entrega' nem 'Quantidade coletada'. "
+            "Use um export com essas metricas ou envie os cabecalhos "
+            "para mapear a nova estrutura."
         )
-    return melhor
+    ws, layout = melhor
+    print(
+        f"  Outlet layout {ws.title}: "
+        + " | ".join(
+            f"{k}={get_column_letter(layout[k]+1)}"
+            for k in ("data", "base_codigo", "coletada", "saida_entrega")
+        ),
+        flush=True,
+    )
+    return ws, layout
 
 
 def carregar_volume(arquivo, gestao, aba):
     wb = load_workbook(arquivo, data_only=True, read_only=True)
     try:
-        ws = escolher_aba(wb, aba)
-        # A selecao acima ja corrige, quando necessario, o limite errado
-        # de linhas informado pelo XLSX. Reutilizamos a mesma worksheet.
+        ws, layout = escolher_aba(wb, aba)
         volume = defaultdict(lambda: [0, 0])
         lidas = validas = fora_orlean = invalidas = 0
-        for row in ws.iter_rows(min_col=1, max_col=13, values_only=True):
+        ncol = max(layout[k] for k in ("data", "base_codigo", "coletada", "saida_entrega")) + 1
+        for linha_num, row in enumerate(
+            ws.iter_rows(min_col=1, max_col=ncol, values_only=True),
+            start=1,
+        ):
             lidas += 1
-            dt = dia(row[0])             # A: Data
-            cod = codigo(row[8])         # I: Codigo da base
+            if linha_num <= layout["cabecalho"]:
+                invalidas += 1
+                continue
+            dt = dia(row[layout["data"]])
+            cod = codigo(row[layout["base_codigo"]])
             if dt is None or not cod:
                 invalidas += 1
                 continue
@@ -263,8 +360,8 @@ def carregar_volume(arquivo, gestao, aba):
                 fora_orlean += 1
                 continue
             try:
-                coletada = numero(row[9])       # J: Quantidade coletada
-                saida = numero(row[12])         # M: Saida para entrega
+                coletada = numero(row[layout["coletada"]])
+                saida = numero(row[layout["saida_entrega"]])
             except (TypeError, ValueError) as exc:
                 raise RuntimeError(
                     f"{ws.title}: linha {lidas}, base {cod}, data {dt}: {exc}"
@@ -273,10 +370,14 @@ def carregar_volume(arquivo, gestao, aba):
             volume[(dt.isoformat(), cod)][1] += saida
             validas += 1
         if not volume:
-            raise RuntimeError("Nenhuma linha valida das bases Orlean nas colunas A/I/J/M.")
+            raise RuntimeError(
+                "Nenhuma linha valida com data, codigo, coleta e saida "
+                "para entrega nas bases Orlean."
+            )
         print(
             f"Aba: {ws.title} | linhas lidas: {lidas:,} | Orlean: {validas:,} "
-            f"| outras bases: {fora_orlean:,} | cabecalhos/invalidas: {invalidas:,}"
+            f"| outras bases: {fora_orlean:,} | cabecalhos/invalidas: {invalidas:,}",
+            flush=True,
         )
         return dict(volume)
     finally:
