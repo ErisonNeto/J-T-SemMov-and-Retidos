@@ -97,7 +97,7 @@ def _consultar_resumo() -> pd.DataFrame:
     Antes, eram agrupadas e transferidas todas as bases do Brasil durante
     45 dias, com 13 dimensoes por linha, e o filtro Orlean era aplicado
     somente no dashboard. Agora a base e filtrada ANTES do GROUP BY.
-    A Gestao publicada e a fonte oficial para o S/C (incluindo Johan).
+    A Gestão vigente do PostgreSQL é a fonte para o S/C (incluindo Johan).
     """
     inicio_perf = time.perf_counter()
     inicio = (datetime.now(TIMEZONE).date() - timedelta(days=_HISTORY_DAYS)).isoformat()
@@ -111,8 +111,12 @@ def _consultar_resumo() -> pd.DataFrame:
             f"{_API_URL}/query", headers=_headers(),
             json={
                 "sql": (
-                    "SELECT base_codigo, base_nome, rm, sc, uf, regional "
-                    "FROM public.jt_gestao_bases"
+                    "SELECT estacao_no AS base_codigo, nome_base AS base_nome, "
+                    "responsavel_regiao AS rm, "
+                    "COALESCE(NULLIF(BTRIM(coordenador), ''), "
+                    "NULLIF(BTRIM(supervisor), ''), '') AS sc, "
+                    "uf, regional "
+                    "FROM jt_operacao.vw_gestao_colaboradores_atual"
                 ),
                 "params": [],
             },
@@ -324,8 +328,10 @@ def carregar_volumetria() -> tuple[pd.DataFrame, str | None]:
                     headers=_headers(),
                     json={
                         "sql": (
-                            "SELECT base_codigo, rm, sc, uf "
-                            "FROM public.jt_gestao_bases"
+                            "SELECT estacao_no AS base_codigo, responsavel_regiao AS rm, "
+                            "COALESCE(NULLIF(BTRIM(coordenador), ''), "
+                            "NULLIF(BTRIM(supervisor), ''), '') AS sc, uf "
+                            "FROM jt_operacao.vw_gestao_colaboradores_atual"
                         ),
                         "params": [],
                     },
