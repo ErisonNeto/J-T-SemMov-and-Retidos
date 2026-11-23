@@ -38,20 +38,40 @@ function meta(el,m,cur){
 }
 function renderVolumetria(d){
  const v=d.volumetria||{};
- const sem=v.sem_mov||{},ret=v.retidos||{};
+ const sem=v.sem_mov||{},ret=v.retidos||{},sla=v.retidos_sla||{};
  const pct=n=>n===null||n===undefined?'—':Number(n).toLocaleString('pt-BR',{minimumFractionDigits:2,maximumFractionDigits:2})+'%';
+ const metaKpi=(el,item)=>{
+  el.classList.remove('good','bad');
+  const alvo=item.meta_percentual;
+  if(alvo===null||alvo===undefined){el.textContent='Meta não cadastrada';return}
+  let texto='Referência KPI ≤ '+pct(alvo);
+  if(item.dentro_meta===true){texto+=' • dentro da referência';el.classList.add('good')}
+  else if(item.dentro_meta===false){texto+=' • acima da referência';el.classList.add('bad')}
+  else texto+=' • sem avaliação';
+  el.textContent=texto;
+ };
  $('#volTotal').textContent=fmt(v.total);
  $('#volSplit').textContent=v.total===null||v.total===undefined
   ?'Sem volumetria J + M cadastrada'
   :'Coletada (J): '+fmt(v.coletada)+' • Saída (M): '+fmt(v.saida_entrega);
  $('#pctSemMov').textContent=pct(sem.percentual);
- $('#pctRetidos').textContent=pct(ret.percentual);
  $('#pctSemMovInfo').textContent=sem.pedidos===null||sem.pedidos===undefined
   ?'Sem dados suficientes para calcular'
-  :fmt(sem.pedidos)+' pedidos >2 dias ÷ '+fmt(v.total)+' volumes';
+  :fmt(sem.pedidos)+' pedidos com 3+ dias sem movimentação ÷ '+fmt(v.total)+' volumes';
+ metaKpi($('#pctSemMovMeta'),sem);
+ // A fonte atual NAO possui a data de vencimento contratual da remessa.
+ // Nunca trate tempo de retencao (aging) como dias apos vencimento SLA.
+ $('#pctRetidosSla').textContent=pct(sla.percentual);
+ $('#pctRetidosSlaInfo').textContent=sla.status==='aguardando_data_de_vencimento'
+  ?'KPI oficial indisponível: falta a data de vencimento por remessa'
+  :(sla.pedidos===null||sla.pedidos===undefined
+    ?'Sem dados suficientes para calcular'
+    :fmt(sla.pedidos)+' pedidos vencidos há mais de 3 dias');
+ metaKpi($('#pctRetidosSlaMeta'),sla);
+ $('#pctRetidos').textContent=pct(ret.percentual);
  $('#pctRetidosInfo').textContent=ret.pedidos===null||ret.pedidos===undefined
   ?'Sem dados suficientes para calcular'
-  :fmt(ret.pedidos)+' pedidos >3 dias ÷ '+fmt(v.total)+' volumes';
+  :fmt(ret.pedidos)+' pedidos com 4+ dias de tempo retido ÷ '+fmt(v.total)+' volumes';
  $('#volAviso').textContent=v.aviso||'';
  $('#volAviso').classList.toggle('hidden',!v.aviso);
 }
@@ -137,7 +157,7 @@ json('/api/snapshot?'+sp).then(snapshot=>{if(request===state.request)renderSnaps
   $('#snapshotFoot').replaceChildren();
  }
 });}catch(e){if(request===state.request){$('#loadError').textContent='Não foi possível carregar este indicador. Verifique a conexão e o período selecionado.';$('#loadError').classList.remove('hidden')}}finally{if(request===state.request)document.body.setAttribute('aria-busy','false')}}
-async function switchTab(ind){++state.request;state.indicador=ind;$$('.tab').forEach(x=>{x.classList.toggle('active',x.dataset.indicador===ind);x.setAttribute('aria-pressed',x.dataset.indicador===ind)});const name=ind==='sem_mov'?'Sem Movimentação':'Retidos';$('#indicatorTitle').textContent=name;$('#evolutionTitle').textContent='Evolução diária • '+name;const limiar=ind==='sem_mov'?'3+ dias':'4+ dias';
+async function switchTab(ind){++state.request;state.indicador=ind;$$('.tab').forEach(x=>{x.classList.toggle('active',x.dataset.indicador===ind);x.setAttribute('aria-pressed',x.dataset.indicador===ind)});const name=ind==='sem_mov'?'Sem Movimentação':'Retidos (aging)';$('#indicatorTitle').textContent=name;$('#evolutionTitle').textContent='Evolução diária • '+name;const limiar=ind==='sem_mov'?'3+ dias':'4+ dias';
  document.querySelectorAll('.indicador-limiar').forEach(el=>el.textContent=el.tagName==='SPAN' && el.closest('.kpi-head')?(ind==='sem_mov'?'(3 dias ou mais)':'(4 dias ou mais)'):limiar);
  $('#indicatorDesc').textContent='Pedidos com aging de '+(ind==='sem_mov'?'3 dias ou mais':'4 dias ou mais')+' e corte adicional de 11+ dias • R/M Orlean';
  $('#downloadBtn').textContent='Baixar base '+limiar;['3','10'].forEach(c=>{['prev','cur','var'].forEach(k=>$('#'+k+c).textContent='—');$('#meta'+c).textContent='Meta —'});['evolutionChart','agingBars','basesBody','scBody'].forEach(id=>$('#'+id).replaceChildren());['#fUf','#fSc','#fBase'].forEach(s=>$(s).value='');document.body.setAttribute('aria-busy','true');try{await loadFilters(ind);if(state.indicador===ind)await loadDashboard()}catch(e){if(state.indicador===ind){document.body.setAttribute('aria-busy','false');toast('Erro ao carregar filtros. Tente novamente.')}}}
