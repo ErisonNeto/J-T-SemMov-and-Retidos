@@ -30,3 +30,15 @@ METAS = {
         "acima_10": _meta("META_RETIDOS_10"),
     },
 }
+
+
+# Metas percentuais de NOVEMBRO / GP-PA, conforme linhas 9 e 10 do KPI.
+# Sao metas percentuais; nao devem ser aplicadas aos cards de QUANTIDADE.
+# O arquivo informado inclui outras colunas percentuais com contextos ainda
+# nao confirmados; somente a primeira referencia (5% e 3%) e usada aqui.
+METAS_PERCENTUAIS = {
+    "sem_mov": _meta("META_PCT_SEM_MOV") if os.getenv("META_PCT_SEM_MOV") else 5.0,
+    "retidos_sla_vencido": (
+        _meta("META_PCT_RETIDOS_SLA") if os.getenv("META_PCT_RETIDOS_SLA") else 3.0
+    ),
+}
