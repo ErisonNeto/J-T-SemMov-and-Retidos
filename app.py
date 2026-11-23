@@ -179,8 +179,9 @@ def percentuais_da_volumetria(raw, volume, inicio, fim, uf='', sc='', base='', e
             'Retidos por aging e apenas indicador auxiliar. O KPI oficial de '
             'retidos vencidos ha mais de 3 dias nao esta disponivel: a fonte '
             'atual nao fornece a data de vencimento por remessa. '
-            'Os limites de 5% e 3% referem-se as metas percentuais, nao '
-            'aos totais de pedidos acumulados.'
+            'As referencias de 5% e 3% foram extraidas da primeira '
+            'coluna numerica informada; nao se aplicam aos totais de '
+            'pedidos acumulados. Recorte DC/CD ainda nao confirmado.'
         )
     return saida
 
