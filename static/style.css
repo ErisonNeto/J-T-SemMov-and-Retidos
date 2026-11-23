@@ -1098,7 +1098,7 @@ th{background:#f8f9fb}tbody tr:hover{background:#fff8f8}
 .vol-panel .panel-title h3 { font-size: 19px; }
 .vol-grid {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0,1fr));
+  grid-template-columns: repeat(4, minmax(0,1fr));
   gap: 12px;
   padding: 16px 18px 13px;
 }
@@ -1136,6 +1136,24 @@ th{background:#f8f9fb}tbody tr:hover{background:#fff8f8}
   font-size: 11px;
   line-height: 1.4;
   color: #667085;
+}
+
+/* KPI oficial de vencidos e referencia por aging devem permanecer distintos. */
+.vol-official-pending {
+  border-left-color: #b8a37a;
+  background: #fffdfa;
+}
+.vol-official-pending .vol-value { color: #986f29; }
+.vol-auxiliary { border-left-color: #98a2b3; }
+.vol-auxiliary .vol-value { color: #344054; }
+.vol-meta {
+  font-weight: 750;
+  font-size: 11px;
+}
+.vol-meta.good { color: #067647; }
+.vol-meta.bad { color: #b42318; }
+@media(max-width:1150px) and (min-width:851px) {
+  .vol-grid { grid-template-columns: repeat(2,minmax(0,1fr)); }
 }
 .vol-aviso {
   margin: 0 18px 16px;
