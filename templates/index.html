@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>J&amp;T | Sem Movimentação e Retidos</title>
-  <link rel="stylesheet" href="/static/style.css?v=20261111-calendario-kpi">
+  <link rel="stylesheet" href="/static/style.css?v=20261123-kpi-sla">
 </head>
 <body>
   <header class="topbar shipping-style-header">
@@ -20,7 +20,7 @@
 
   <nav class="tabs" aria-label="Indicadores">
     <button class="tab active" aria-pressed="true" data-indicador="sem_mov">Sem Movimentação</button>
-    <button class="tab" aria-pressed="false" data-indicador="retidos">Retidos</button>
+    <button class="tab" aria-pressed="false" data-indicador="retidos">Retidos (Aging)</button>
   </nav>
 
   <main class="container">
@@ -58,7 +58,7 @@
         <div>
           <span class="section-kicker">KPIs SOBRE O VOLUME PRINCIPAL</span>
           <h3>Sem Movimentação e Retidos (%)</h3>
-          <p>Denominador: quantidade coletada (J) + quantidade com saída para entrega (M), na mesma data e base do Orlean.</p>
+          <p>Denominador de referência: coletada (J) + saída para entrega (M), por data e base. Sem Mov ≥3 dias; retidos vencidos usam o prazo de SLA, não o aging de retenção.</p>
         </div>
       </div>
       <div class="vol-grid">
@@ -68,14 +68,22 @@
           <small id="volSplit">Aguardando volumetria...</small>
         </article>
         <article class="vol-card">
-          <span class="vol-eyebrow">SEM MOVIMENTAÇÃO • &gt;2 dias</span>
+          <span class="vol-eyebrow">SEM MOVIMENTAÇÃO • ≥3 DIAS</span>
           <strong class="vol-value" id="pctSemMov">—</strong>
           <small id="pctSemMovInfo">Aguardando cálculo...</small>
+          <small id="pctSemMovMeta" class="vol-meta">Referência KPI: ≤5%</small>
         </article>
-        <article class="vol-card">
-          <span class="vol-eyebrow">RETIDOS • &gt;3 dias</span>
+        <article class="vol-card vol-official-pending">
+          <span class="vol-eyebrow">RETIDOS • &gt;3 DIAS APÓS VENCIMENTO DO SLA</span>
+          <strong class="vol-value" id="pctRetidosSla">—</strong>
+          <small id="pctRetidosSlaInfo">Sem data de vencimento por remessa na fonte atual</small>
+          <small id="pctRetidosSlaMeta" class="vol-meta">Referência KPI: ≤3% • sem validação</small>
+        </article>
+        <article class="vol-card vol-auxiliary">
+          <span class="vol-eyebrow">RETIDOS • AGING &gt;3 DIAS (AUXILIAR)</span>
           <strong class="vol-value" id="pctRetidos">—</strong>
           <small id="pctRetidosInfo">Aguardando cálculo...</small>
+          <small>Não equivale ao prazo de SLA vencido</small>
         </article>
       </div>
       <p class="vol-aviso" id="volAviso" role="status"></p>
@@ -120,7 +128,7 @@
     <section class="panel" aria-label="Conferência diária de remessas por Aging">
       <div class="panel-title"><div><span class="section-kicker">CONFERÊNCIA COM PLANILHA</span>
         <h3>Retrato diário de remessas <span id="snapshotDate">—</span></h3>
-        <p>Contagem de remessas no dia final selecionado, por 1, 2, 3, 4 e mais de 4 dias. Não confundir com os pedidos acumulados na semana.</p>
+        <p>Contagem de remessas no dia final selecionado, por 1, 2, 3, 4 e mais de 4 dias de aging. Não equivale ao SLA vencido; o acumulado do período mantém a regra histórica.</p>
       </div></div>
       <div class="table-wrap"><table><thead><tr>
         <th>Base</th><th>S/C</th><th>1 dia</th><th>2 dias</th><th>3 dias</th>
@@ -151,6 +159,6 @@
   </main>
 
   <div id="toast" class="toast"></div>
-  <script src="/static/app.js?v=20261112-criterio-3mais"></script>
+  <script src="/static/app.js?v=20261123-kpi-sla"></script>
 </body>
 </html>
