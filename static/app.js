@@ -44,7 +44,7 @@ function renderVolumetria(d){
   el.classList.remove('good','bad');
   const alvo=item.meta_percentual;
   if(alvo===null||alvo===undefined){el.textContent='Meta não cadastrada';return}
-  let texto='Referência KPI ≤ '+pct(alvo);
+  let texto='Referência da 1ª coluna ≤ '+pct(alvo);
   if(item.dentro_meta===true){texto+=' • dentro da referência';el.classList.add('good')}
   else if(item.dentro_meta===false){texto+=' • acima da referência';el.classList.add('bad')}
   else texto+=' • sem avaliação';
