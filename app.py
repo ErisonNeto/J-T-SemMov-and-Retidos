@@ -7,7 +7,7 @@ from fastapi import FastAPI, HTTPException, Query
 from fastapi.responses import HTMLResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
-from config import METAS
+from config import METAS, METAS_PERCENTUAIS
 from arquivos import carregar, status_fonte, carregar_volumetria
 from exclusoes import sc_excluido
 
@@ -69,15 +69,29 @@ def percentuais_da_volumetria(raw, volume, inicio, fim, uf='', sc='', base='', e
     """
     sem_v = {
         'percentual': None, 'pedidos': None, 'limiar_dias': 2,
-        'criterio': 'tempo sem movimentacao > 2 dias',
+        'criterio': 'sem movimentacao >= 3 dias (DC/CD, conforme KPI de referencia)',
+        'meta_percentual': METAS_PERCENTUAIS['sem_mov'],
+        'dentro_meta': None,
     }
     ret_v = {
         'percentual': None, 'pedidos': None, 'limiar_dias': 3,
-        'criterio': 'tempo retido > 3 dias; prazo vencido nao validado',
+        'criterio': 'tempo retido > 3 dias; indicador auxiliar de aging, nao SLA vencido',
+        'meta_percentual': None, 'dentro_meta': None,
+    }
+    # A fonte atual nao tem prazo de vencimento por remessa. Nao e possivel
+    # afirmar que 4 dias retido = 4 dias de SLA vencido.
+    # KPI oficial fica indisponivel ate integrarmos a data do prazo.
+    retidos_sla = {
+        'percentual': None, 'pedidos': None, 'limiar_dias_apos_vencimento': 3,
+        'criterio': 'pedidos com mais de 3 dias apos o prazo de vencimento',
+        'meta_percentual': METAS_PERCENTUAIS['retidos_sla_vencido'],
+        'dentro_meta': None,
+        'status': 'aguardando_data_de_vencimento',
     }
     saida = {
         'coletada': None, 'saida_entrega': None, 'total': None,
         'sem_mov': sem_v, 'retidos': ret_v,
+        'retidos_sla': retidos_sla,
         'aviso': erro_volume,
     }
     if volume.empty:
@@ -152,14 +166,21 @@ def percentuais_da_volumetria(raw, volume, inicio, fim, uf='', sc='', base='', e
         saida[chave]['percentual'] = round(
             100 * pedidos / denominador, 2
         )
+        if chave == 'sem_mov':
+            saida[chave]['dentro_meta'] = (
+                saida[chave]['percentual'] <= saida[chave]['meta_percentual']
+            )
     if pendencias:
         saida['aviso'] = (
             'Percentuais incompletos: ' + '; '.join(pendencias)
         )
     else:
         saida['aviso'] = (
-            'Retidos usa tempo de retencao > 3 dias; '
-            'o vencimento oficial do SLA ainda precisa de validacao.'
+            'Retidos por aging e apenas indicador auxiliar. O KPI oficial de '
+            'retidos vencidos ha mais de 3 dias nao esta disponivel: a fonte '
+            'atual nao fornece a data de vencimento por remessa. '
+            'Os limites de 5% e 3% referem-se as metas percentuais, nao '
+            'aos totais de pedidos acumulados.'
         )
     return saida
 
@@ -294,6 +315,11 @@ def dashboard(
                 'coletada': None, 'saida_entrega': None, 'total': None,
                 'sem_mov': {'percentual': None, 'pedidos': None},
                 'retidos': {'percentual': None, 'pedidos': None},
+                'retidos_sla': {
+                    'percentual': None, 'pedidos': None,
+                    'meta_percentual': METAS_PERCENTUAIS['retidos_sla_vencido'],
+                    'dentro_meta': None, 'status': 'aguardando_data_de_vencimento',
+                },
                 'aviso': 'Sem periodo disponivel',
             },
             'ultima_carga': None, 'fonte': status_fonte(),
