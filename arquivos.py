@@ -172,6 +172,7 @@ def _consultar_resumo() -> pd.DataFrame:
                   SELECT 1
                   FROM public.jt_arbitragem_ocorrencias AS a
                   WHERE a.remessa = d.remessa
+                    AND NULLIF(BTRIM(a.remessa), '') IS NOT NULL
                     AND a.tipo IN ('Avaria', 'Extravio', 'PNR')
                     AND UPPER(BTRIM(COALESCE(a.status, ''))) IN (
                         'PROCESSO ENCERRADO', 'ARBITRAGEM FINALIZADA'
