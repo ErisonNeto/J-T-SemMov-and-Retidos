@@ -260,22 +260,24 @@ def consultar_contagem_remessas(
     minimo_aging: int,
     maximo_aging: int | None,
 ) -> dict:
-    """Conta remessas sem duplicidade, diretamente na tabela de detalhes.
+    """Conta remessas distintas no periodo E por dia, num unico SQL.
 
-    Reutiliza os codigos ja filtrados da Gestao oficial de Orlean para
-    reproduzir exatamente o recorte do painel (base, UF e S/C).
-    Nunca transfere remessas individuais ao navegador.
+    A soma dos unicos diarios nao equivale ao unico do periodo.
+    Os ids nao saem do banco; somente contagens sao enviadas ao painel.
     """
     if indicador not in ("sem_mov", "retidos"):
         raise ValueError("Indicador invalido para contagem de remessas.")
     if not codigos:
-        return {"pacotes_unicos": 0, "acumulado": 0, "sem_remessa": 0}
+        return {"pacotes_unicos": 0, "acumulado": 0, "sem_remessa": 0,
+                "evolucao": []}
     faixa_final = "AND d.aging_valor <= %s" if maximo_aging is not None else ""
     parametros = [inicio, fim, sorted(set(codigos)), indicador, minimo_aging]
     if maximo_aging is not None:
         parametros.append(maximo_aging)
     sql = f"""
-        SELECT COUNT(DISTINCT NULLIF(BTRIM(d.remessa), ''))
+        SELECT CASE WHEN GROUPING(d.data) = 1
+                    THEN NULL ELSE d.data::text END AS data,
+               COUNT(DISTINCT NULLIF(BTRIM(d.remessa), ''))
                    FILTER (WHERE COALESCE(d.pedidos, 0) > 0)::bigint
                    AS pacotes_unicos,
                COALESCE(SUM(d.pedidos), 0)::bigint AS acumulado,
@@ -290,6 +292,8 @@ def consultar_contagem_remessas(
           AND d.aging_valor >= %s
           {faixa_final}
           {_FILTRO_ARBITRAGEM_FINAL_SQL}
+        GROUP BY GROUPING SETS ((), (d.data))
+        ORDER BY data NULLS FIRST
     """
     with requests.Session() as session:
         session.headers.update({"Accept-Encoding": "identity"})
@@ -305,21 +309,119 @@ def consultar_contagem_remessas(
             f"{resp.text[:250]}"
         )
     rows = _extrair_linhas(resp.json())
-    if len(rows) != 1:
-        raise ValueError("Consulta de remessas unicas retornou quantidade invalida de linhas.")
-    row = rows[0]
-    if isinstance(row, dict):
-        campos = [row.get(k) for k in ("pacotes_unicos", "acumulado", "sem_remessa")]
-    elif isinstance(row, (list, tuple)) and len(row) == 3:
-        campos = list(row)
-    else:
-        raise ValueError("Formato da contagem de remessas unicas invalido.")
-    if any(v is None for v in campos):
-        raise ValueError("JT API retornou contagem incompleta de remessas.")
-    return dict(zip(
-        ("pacotes_unicos", "acumulado", "sem_remessa"),
-        (int(v) for v in campos),
-    ))
+    if not rows:
+        raise ValueError("Consulta de remessas distintas sem resultado.")
+    total = None
+    evolucao = []
+    for row in rows:
+        if isinstance(row, dict):
+            valores = [row.get(k) for k in
+                       ("data", "pacotes_unicos", "acumulado", "sem_remessa")]
+        elif isinstance(row, (list, tuple)) and len(row) == 4:
+            valores = list(row)
+        else:
+            raise ValueError("Formato invalido de contagem por dia.")
+        dia, unicos, acumulado, sem_remessa = valores
+        if any(v is None for v in (unicos, acumulado, sem_remessa)):
+            raise ValueError("Contagem de remessas incompleta.")
+        item = {
+            "pacotes_unicos": int(unicos),
+            "acumulado": int(acumulado),
+            "sem_remessa": int(sem_remessa),
+        }
+        if dia is None:
+            if total is not None:
+                raise ValueError("Consulta repetiu o total consolidado.")
+            total = item
+        else:
+            item["data"] = str(dia)[:10]
+            evolucao.append(item)
+    if total is None:
+        raise ValueError("Consulta nao retornou total consolidado.")
+    total["evolucao"] = sorted(evolucao, key=lambda item: item["data"])
+    return total
+
+
+def consultar_remessas_unicas_semanas(
+    indicador: str,
+    inicio_anterior: str,
+    inicio_atual: str,
+    fim_atual: str,
+    codigos: list[str],
+) -> dict:
+    """Conta por remessa em cada semana para aging 4+ e 11+ numa consulta.
+
+    Semanas sao DISTINCT independentes: a mesma remessa pode entrar nas
+    duas semanas, mas nunca duas vezes dentro de uma mesma semana.
+    """
+    if indicador not in ("sem_mov", "retidos"):
+        raise ValueError("Indicador invalido para comparacao semanal.")
+    if not codigos:
+        return {}
+    sql = f"""
+        WITH recorte AS (
+            SELECT CASE WHEN d.data::date >= %s::date
+                        THEN 'atual' ELSE 'anterior' END AS periodo,
+                   NULLIF(BTRIM(d.remessa), '') AS remessa,
+                   COALESCE(d.pedidos, 0) AS pedidos,
+                   COALESCE(d.aging_valor, 0) AS aging
+            FROM public.sem_mov_retidos_detalhe AS d
+            WHERE d.data >= %s::date AND d.data <= %s::date
+              AND d.base_codigo = ANY(%s::text[])
+              AND d.indicador = %s
+              AND d.aging_valor > 3
+              {_FILTRO_ARBITRAGEM_FINAL_SQL}
+        )
+        SELECT periodo,
+               COUNT(DISTINCT remessa)
+                   FILTER (WHERE aging > 3 AND pedidos > 0)::bigint AS unicos_4,
+               COUNT(DISTINCT remessa)
+                   FILTER (WHERE aging > 10 AND pedidos > 0)::bigint AS unicos_11,
+               COALESCE(SUM(pedidos) FILTER (WHERE aging > 3), 0)::bigint
+                   AS acumulado_4,
+               COALESCE(SUM(pedidos) FILTER (WHERE aging > 10), 0)::bigint
+                   AS acumulado_11,
+               COUNT(*) FILTER (WHERE aging > 3 AND pedidos > 0
+                   AND remessa IS NULL)::bigint AS sem_remessa_4,
+               COUNT(*) FILTER (WHERE aging > 10 AND pedidos > 0
+                   AND remessa IS NULL)::bigint AS sem_remessa_11
+        FROM recorte
+        GROUP BY periodo
+    """
+    with requests.Session() as session:
+        session.headers.update({"Accept-Encoding": "identity"})
+        resp = session.post(
+            f"{_API_URL}/query",
+            headers=_headers(),
+            json={
+                "sql": sql,
+                "params": [inicio_atual, inicio_anterior, fim_atual,
+                           sorted(set(codigos)), indicador],
+            },
+            timeout=max(_TIMEOUT, 120),
+        )
+    if not resp.ok:
+        raise RuntimeError(
+            f"JT API /query comparacao de unicos HTTP {resp.status_code}: "
+            f"{resp.text[:250]}"
+        )
+    resultado = {}
+    colunas = ("periodo", "unicos_4", "unicos_11", "acumulado_4",
+               "acumulado_11", "sem_remessa_4", "sem_remessa_11")
+    for row in _extrair_linhas(resp.json()):
+        if isinstance(row, dict):
+            campos = [row.get(k) for k in colunas]
+        elif isinstance(row, (list, tuple)) and len(row) == len(colunas):
+            campos = list(row)
+        else:
+            raise ValueError("Formato invalido da comparacao de remessas.")
+        periodo, *valores = campos
+        if periodo not in ("atual", "anterior") or any(
+            v is None for v in valores
+        ):
+            raise ValueError("Comparacao de remessas sem periodo/contagens.")
+        resultado[periodo] = dict(zip(colunas[1:], (int(v) for v in valores)))
+    return resultado
 
 
 def carregar() -> pd.DataFrame:
