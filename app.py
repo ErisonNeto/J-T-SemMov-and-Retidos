@@ -75,8 +75,9 @@ def percentuais_da_volumetria(raw, volume, inicio, fim, uf='', sc='', base='', e
     }
     ret_v = {
         'percentual': None, 'pedidos': None, 'limiar_dias': 3,
-        'criterio': 'tempo retido > 3 dias; indicador auxiliar de aging, nao SLA vencido',
-        'meta_percentual': None, 'dentro_meta': None,
+        'criterio': 'retidos com aging > 3 dias (4 dias ou mais); vencimento do SLA nao verificado',
+        'meta_percentual': METAS_PERCENTUAIS['retidos_aging'],
+        'dentro_meta': None,
     }
     # A fonte atual nao tem prazo de vencimento por remessa. Nao e possivel
     # afirmar que 4 dias retido = 4 dias de SLA vencido.
@@ -166,7 +167,7 @@ def percentuais_da_volumetria(raw, volume, inicio, fim, uf='', sc='', base='', e
         saida[chave]['percentual'] = round(
             100 * pedidos / denominador, 2
         )
-        if chave == 'sem_mov':
+        if saida[chave]['meta_percentual'] is not None:
             saida[chave]['dentro_meta'] = (
                 saida[chave]['percentual'] <= saida[chave]['meta_percentual']
             )
@@ -176,12 +177,12 @@ def percentuais_da_volumetria(raw, volume, inicio, fim, uf='', sc='', base='', e
         )
     else:
         saida['aviso'] = (
-            'Retidos por aging e apenas indicador auxiliar. O KPI oficial de '
-            'retidos vencidos ha mais de 3 dias nao esta disponivel: a fonte '
-            'atual nao fornece a data de vencimento por remessa. '
-            'As referencias de 5% e 3% foram extraidas da primeira '
-            'coluna numerica informada; nao se aplicam aos totais de '
-            'pedidos acumulados. Recorte DC/CD ainda nao confirmado.'
+            'Sem Mov e Retidos consideram aging >3 dias (4+), '
+            'com acumulado de snapshots no periodo. Referencias '
+            'de 5% e 3% aplicadas aos percentuais operacionais, '
+            'nao aos totais de quantidade. Nao confundir aging de '
+            'Retidos com prazo de SLA vencido; a fonte atual nao '
+            'traz data de vencimento. Recorte DC/CD nao confirmado.'
         )
     return saida
 
@@ -315,7 +316,9 @@ def dashboard(
             'volumetria': {
                 'coletada': None, 'saida_entrega': None, 'total': None,
                 'sem_mov': {'percentual': None, 'pedidos': None},
-                'retidos': {'percentual': None, 'pedidos': None},
+                'retidos': {'percentual': None, 'pedidos': None,
+                            'meta_percentual': METAS_PERCENTUAIS['retidos_aging'],
+                            'dentro_meta': None},
                 'retidos_sla': {
                     'percentual': None, 'pedidos': None,
                     'meta_percentual': METAS_PERCENTUAIS['retidos_sla_vencido'],
