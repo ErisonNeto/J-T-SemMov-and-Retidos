@@ -1,4 +1,4 @@
-const state={indicador:'sem_mov',request:0};
+const state={indicador:'sem_mov',request:0,agingRequest:0};
 const $=s=>document.querySelector(s); const $$=s=>[...document.querySelectorAll(s)];
 const fmt=n=>n===null||n===undefined?'—':Number(n).toLocaleString('pt-BR');
 const fmtDate=s=>s?new Date(s+'T12:00:00').toLocaleDateString('pt-BR'):'—';
@@ -30,6 +30,59 @@ function setPeriodDates(items){
 }
 
 async function loadFilters(ind=state.indicador){const f=await json('/api/filters?indicador='+ind);if(ind!==state.indicador)return;setPeriodDates(f.datas||[]);setSelect($('#fUf'),f.uf||[]);setSelect($('#fSc'),f.sc||[]);setSelect($('#fBase'),f.bases||[],x=>({v:x.codigo,t:`${x.nome} (${x.codigo})`}));}
+
+function criarOpcoesAging(){
+ const seletor=$('#fAging');
+ const opcao=seletor.options[0];
+ // 1..30 dias exatos, alem das faixas ja definidas no HTML.
+ for(let i=1;i<=30;i++){
+  const opt=document.createElement('option');
+  opt.value=String(i);
+  opt.textContent=i===1?'Exatamente 1 dia':\`Exatamente \${i} dias\`;
+  seletor.insertBefore(opt,opcao);
+ }
+ seletor.value='4mais';
+}
+function parametrosAging(){
+ const p=q();
+ p.set('aging',$('#fAging').value||'4mais');
+ return p;
+}
+function renderAgingConsulta(d){
+ $('#consultaAgingFaixa').textContent='• '+(d.rotulo||'Aging');
+ $('#consultaAgingPedidos').textContent=fmt(d.total_pedidos);
+ $('#consultaAgingUltimo').textContent=fmt(d.pedidos_ultimo_dia);
+ $('#consultaAgingLinhas').textContent=fmt(d.total_linhas);
+ $('#consultaAgingStatus').textContent=d.aviso||'';
+ const bases=d.bases||[];
+ $('#consultaAgingBases').innerHTML=bases.length?bases.map(x=>
+  '<tr><td><strong>'+esc(x.base_nome||x.base_codigo)+'</strong><div class="base-secondary">'+esc(x.base_codigo)+'</div></td>'+
+  '<td>'+esc(x.sc||'—')+'</td><td class="num">'+fmt(x.pedidos)+'</td><td class="num">'+fmt(x.linhas)+'</td></tr>'
+ ).join(''):'<tr><td colspan="4" class="empty">Nenhum pacote nesta faixa e recorte.</td></tr>';
+ const dias=d.evolucao||[];
+ $('#consultaAgingDias').innerHTML=dias.length?dias.map(x=>
+  '<tr><td>'+fmtDate(x.data)+'</td><td class="num">'+fmt(x.pedidos)+'</td><td class="num">'+fmt(x.linhas)+'</td></tr>'
+ ).join(''):'<tr><td colspan="3" class="empty">Nenhum registro no período.</td></tr>';
+}
+async function loadAgingConsulta(){
+ const req=++state.agingRequest, indicador=state.indicador;
+ $('#consultaAgingStatus').textContent='Consultando os pacotes da faixa selecionada...';
+ ['#consultaAgingPedidos','#consultaAgingUltimo','#consultaAgingLinhas'].forEach(x=>$(x).textContent='—');
+ $('#consultaAgingBases').innerHTML='<tr><td colspan="4" class="empty">Consultando bases...</td></tr>';
+ $('#consultaAgingDias').innerHTML='<tr><td colspan="3" class="empty">Consultando histórico...</td></tr>';
+ try{
+  if(!$('#fDataInicial').value||!$('#fDataFinal').value)return;
+  const d=await json('/api/consulta-aging?'+parametrosAging());
+  if(req!==state.agingRequest||indicador!==state.indicador)return;
+  renderAgingConsulta(d);
+ }catch(e){
+  if(req!==state.agingRequest||indicador!==state.indicador)return;
+  $('#consultaAgingStatus').textContent='Erro ao consultar aging. Confira o período e a conexão com a JT API.';
+  $('#consultaAgingBases').innerHTML='<tr><td colspan="4" class="empty">Não foi possível consultar.</td></tr>';
+  $('#consultaAgingDias').innerHTML='<tr><td colspan="3" class="empty">Não foi possível consultar.</td></tr>';
+ }
+}
+
 function meta(el,m,cur){
  el.className='meta';
  if(m===null||m===undefined){el.hidden=true;el.textContent='';return}
@@ -140,7 +193,7 @@ function renderSnapshot(d){
   campos.map(k=>'<th class="num">'+fmt(total[k]||0)+'</th>').join('')+'</tr>';
  $('#snapshotNote').textContent=d.aviso||'Comparar somente snapshots da mesma data.';
 }
-async function loadDashboard(){const request=++state.request;document.body.setAttribute('aria-busy','true');limparResultadosAoFiltrar();$('#snapshotBody').innerHTML='<tr><td colspan="9" class="empty">Conferindo remessas do dia final...</td></tr>';$('#snapshotFoot').replaceChildren();$('#loadError').classList.add('hidden');try{if($('#fDataInicial').value>$('#fDataFinal').value){toast('Data inicial não pode ser maior que a final');return}const d=await json('/api/dashboard?'+q());if(request!==state.request)return;const fs=d.fonte||{};$('#sourceStatus').textContent=fs.fonte?fs.fonte+(fs.sincronizado_em?' • Sincronizado: '+new Date(fs.sincronizado_em).toLocaleString('pt-BR'):'')+(fs.consulta_segundos!==undefined?' • Consulta ao banco: '+fmt(fs.consulta_segundos)+' s':''):'';$('#sourceWarning').textContent=fs.aviso||'';$('#sourceWarning').classList.toggle('hidden',!fs.aviso);renderKpis(d);renderVolumetria(d);lineChart($('#evolutionChart'),d.evolucao);bars($('#agingBars'),d.aging);renderTables(d);
+async function loadDashboard(){const request=++state.request;document.body.setAttribute('aria-busy','true');limparResultadosAoFiltrar();$('#snapshotBody').innerHTML='<tr><td colspan="9" class="empty">Conferindo remessas do dia final...</td></tr>';$('#snapshotFoot').replaceChildren();$('#loadError').classList.add('hidden');try{if($('#fDataInicial').value>$('#fDataFinal').value){toast('Data inicial não pode ser maior que a final');return}const d=await json('/api/dashboard?'+q());if(request!==state.request)return;const fs=d.fonte||{};$('#sourceStatus').textContent=fs.fonte?fs.fonte+(fs.sincronizado_em?' • Sincronizado: '+new Date(fs.sincronizado_em).toLocaleString('pt-BR'):'')+(fs.consulta_segundos!==undefined?' • Consulta ao banco: '+fmt(fs.consulta_segundos)+' s':''):'';$('#sourceWarning').textContent=fs.aviso||'';$('#sourceWarning').classList.toggle('hidden',!fs.aviso);renderKpis(d);renderVolumetria(d);lineChart($('#evolutionChart'),d.evolucao);bars($('#agingBars'),d.aging);renderTables(d);loadAgingConsulta();
 const sp=new URLSearchParams({indicador:state.indicador,data:$('#fDataFinal').value,uf:$('#fUf').value,sc:$('#fSc').value,base:$('#fBase').value});
 json('/api/snapshot?'+sp).then(snapshot=>{if(request===state.request)renderSnapshot(snapshot)}).catch(err=>{
  if(request===state.request){
@@ -149,12 +202,19 @@ json('/api/snapshot?'+sp).then(snapshot=>{if(request===state.request)renderSnaps
   $('#snapshotFoot').replaceChildren();
  }
 });}catch(e){if(request===state.request){$('#loadError').textContent='Não foi possível carregar este indicador. Verifique a conexão e o período selecionado.';$('#loadError').classList.remove('hidden')}}finally{if(request===state.request)document.body.setAttribute('aria-busy','false')}}
-async function switchTab(ind){++state.request;state.indicador=ind;$$('.tab').forEach(x=>{x.classList.toggle('active',x.dataset.indicador===ind);x.setAttribute('aria-pressed',x.dataset.indicador===ind)});const name=ind==='sem_mov'?'Sem Movimentação':'Retidos';$('#indicatorTitle').textContent=name;$('#evolutionTitle').textContent='Evolução diária • '+name;const limiar='4+ dias';
+async function switchTab(ind){++state.request;++state.agingRequest;state.indicador=ind;$$('.tab').forEach(x=>{x.classList.toggle('active',x.dataset.indicador===ind);x.setAttribute('aria-pressed',x.dataset.indicador===ind)});const name=ind==='sem_mov'?'Sem Movimentação':'Retidos';$('#indicatorTitle').textContent=name;$('#evolutionTitle').textContent='Evolução diária • '+name;const limiar='4+ dias';
  document.querySelectorAll('.indicador-limiar').forEach(el=>el.textContent=el.tagName==='SPAN' && el.closest('.kpi-head')?'(4 dias ou mais)':limiar);
  $('#indicatorDesc').textContent='Pedidos com aging de '+'4 dias ou mais'+' e corte adicional de 11+ dias • R/M Orlean';
  $('#downloadBtn').textContent='Baixar base '+limiar;['3','10'].forEach(c=>{['prev','cur','var'].forEach(k=>$('#'+k+c).textContent='—');$('#meta'+c).textContent='Meta —'});['evolutionChart','agingBars','basesBody','scBody'].forEach(id=>$('#'+id).replaceChildren());['#fUf','#fSc','#fBase'].forEach(s=>$(s).value='');document.body.setAttribute('aria-busy','true');try{await loadFilters(ind);if(state.indicador===ind)await loadDashboard()}catch(e){if(state.indicador===ind){document.body.setAttribute('aria-busy','false');toast('Erro ao carregar filtros. Tente novamente.')}}}
 $$('.tab').forEach(t=>t.onclick=()=>switchTab(t.dataset.indicador));
 ['#fDataInicial','#fDataFinal','#fUf','#fSc','#fBase'].forEach(s=>$(s).onchange=()=>loadDashboard());
-$('#btnClear').onclick=()=>{['#fUf','#fSc','#fBase'].forEach(s=>$(s).value='');loadDashboard()};
+$('#btnClear').onclick=()=>{['#fUf','#fSc','#fBase'].forEach(s=>$(s).value='');$('#fAging').value='4mais';loadDashboard()};
 $('#downloadBtn').onclick=()=>{const p=new URLSearchParams({indicador:state.indicador,data_inicial:$('#fDataInicial').value,data_final:$('#fDataFinal').value,corte:'3',uf:$('#fUf').value,sc:$('#fSc').value,base:$('#fBase').value});window.location='/api/download?'+p};
+criarOpcoesAging();
+$('#fAging').onchange=()=>loadAgingConsulta();
+$('#btnExportAging').onclick=()=>{
+ const p=parametrosAging();
+ if(!p.get('data_inicial')||!p.get('data_final')){toast('Selecione o período da consulta');return}
+ window.location='/api/consulta-aging.csv?'+p;
+};
 switchTab(new URLSearchParams(window.location.search).get('indicador') === 'retidos' ? 'retidos' : 'sem_mov');
