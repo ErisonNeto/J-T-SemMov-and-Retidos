@@ -156,6 +156,31 @@ class TestConsultaAging(unittest.TestCase):
                 self.assertIsNone(resposta["pacotes_unicos"])
                 self.assertEqual(resposta["acumulado"], 4)
 
+    def test_pacotes_unicos_na_evolucao_diaria_sem_somar_dias(self):
+        for indicador in ("sem_mov", "retidos"):
+            dados = self.df.copy()
+            dados["indicador"] = indicador
+            with patch("app.carregar", return_value=dados), patch(
+                "app.consultar_contagem_remessas",
+                return_value={
+                    "pacotes_unicos": 2, "acumulado": 15, "sem_remessa": 0,
+                    "evolucao": [
+                        {"data": "2026-11-14", "pacotes_unicos": 2,
+                         "acumulado": 15, "sem_remessa": 0},
+                    ],
+                }
+            ):
+                resultado = pacotes_unicos(
+                    indicador=indicador, data_inicial="2026-11-13",
+                    data_final="2026-11-14", uf="", sc="", base="",
+                    aging="acima_3",
+                )
+            self.assertEqual(resultado["pacotes_unicos"], 2)
+            self.assertEqual(resultado["acumulado"], 15)
+            self.assertEqual(resultado["evolucao"], [
+                {"data": "2026-11-14", "pacotes_unicos": 2}
+            ])
+
     def test_comparacao_semanal_mostra_unicos_em_4_e_11_nos_dois_paineis(self):
         for indicador in ("sem_mov", "retidos"):
             dados = self.df.copy()
