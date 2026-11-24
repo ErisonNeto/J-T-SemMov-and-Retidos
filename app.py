@@ -8,7 +8,7 @@ from fastapi.responses import HTMLResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
 from config import METAS, METAS_PERCENTUAIS
-from arquivos import carregar, status_fonte, carregar_volumetria, consultar_contagem_remessas
+from arquivos import carregar, status_fonte, carregar_volumetria, consultar_contagem_remessas, consultar_remessas_unicas_semanas
 from exclusoes import sc_excluido
 
 BASE_DIR = Path(__file__).resolve().parent
@@ -569,6 +569,7 @@ def pacotes_unicos(
         "periodo": {"inicio": inicio, "fim": fim},
         "faixa": aging,
         "aviso": "",
+        "evolucao": [],
     }
     if df.empty:
         return resposta
@@ -594,6 +595,22 @@ def pacotes_unicos(
             )
         else:
             resposta["pacotes_unicos"] = contagem["pacotes_unicos"]
+            # Nao confundir soma dos unicos diarios com o total distinto
+            # do periodo. Cada dia e conferido contra o snapshot agregado.
+            esperado_por_dia = {
+                str(dia): int(qtd)
+                for dia, qtd in df.groupby("data")["pedidos"].sum().items()
+            }
+            resposta["evolucao"] = [
+                {"data": item["data"],
+                 "pacotes_unicos": (
+                     item["pacotes_unicos"]
+                     if item["sem_remessa"] == 0 and
+                     item["acumulado"] == esperado_por_dia.get(item["data"])
+                     else None
+                 )}
+                for item in contagem["evolucao"]
+            ]
     except Exception:
         # A consulta de detalhes nao deve interromper o acumulado/ranking.
         resposta["aviso"] = (
@@ -601,6 +618,77 @@ def pacotes_unicos(
             "os detalhes no PostgreSQL pela JT API."
         )
     return resposta
+
+
+@app.get('/api/comparacao-pacotes-unicos')
+def comparacao_pacotes_unicos(
+    indicador: str = Query(pattern='^(sem_mov|retidos)$'),
+    data_inicial: str = '',
+    data_final: str = '',
+    uf: str = '', sc: str = '', base: str = '',
+):
+    """Remessas unicas dentro de cada semana dos KPIs 4+ e 11+ dias.
+
+    As duas semanas sao deduplicadas separadamente; acumulado oficial
+    continua vindo da consulta de dashboard.
+    """
+    raw = carregar()
+    inicio, fim, _ = resolver_periodo(raw, indicador, data_inicial, data_final)
+    retorno = {
+        "anterior": {"acima_3": None, "acima_10": None},
+        "atual": {"acima_3": None, "acima_10": None},
+        "aviso": "",
+    }
+    if inicio is None or fim is None:
+        return retorno
+
+    dias = (fim - inicio).days + 1
+    fim_anterior = inicio - timedelta(days=1)
+    inicio_anterior = fim_anterior - timedelta(days=dias - 1)
+    df = filtrar(raw, indicador, uf, sc, base)
+    codigos = sorted({
+        str(x) for x in df.loc[
+            (df.data >= inicio_anterior.isoformat())
+            & (df.data <= fim.isoformat()), "base_codigo"
+        ].dropna().unique() if str(x)
+    })
+    try:
+        banco = consultar_remessas_unicas_semanas(
+            indicador, inicio_anterior.isoformat(), inicio.isoformat(),
+            fim.isoformat(), codigos
+        )
+        avisos = []
+        for periodo, dt_ini, dt_fim in (
+            ("anterior", inicio_anterior, fim_anterior),
+            ("atual", inicio, fim),
+        ):
+            recorte = df.loc[
+                (df.data >= dt_ini.isoformat())
+                & (df.data <= dt_fim.isoformat())
+            ]
+            esperado = quantidades(recorte, indicador)
+            consultado = banco.get(periodo)
+            for chave, sufixo in (("acima_3", "4"), ("acima_10", "11")):
+                acumulado = esperado[chave]
+                if consultado is None:
+                    if acumulado == 0:
+                        retorno[periodo][chave] = 0
+                    else:
+                        avisos.append(f"{periodo} {sufixo}+ sem retorno do banco")
+                    continue
+                if consultado[f"acumulado_{sufixo}"] != acumulado:
+                    avisos.append(f"{periodo} {sufixo}+ com cargas divergentes")
+                elif consultado[f"sem_remessa_{sufixo}"] > 0:
+                    avisos.append(f"{periodo} {sufixo}+ com remessa em branco")
+                else:
+                    retorno[periodo][chave] = consultado[f"unicos_{sufixo}"]
+        retorno["aviso"] = "; ".join(avisos)
+    except Exception:
+        retorno["aviso"] = (
+            "Nao foi possivel conferir os pacotes unicos das semanas "
+            "no PostgreSQL. Valores nao estimados."
+        )
+    return retorno
 
 
 @app.get('/api/consulta-aging.csv')
