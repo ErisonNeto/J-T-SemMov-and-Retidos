@@ -1098,7 +1098,7 @@ th{background:#f8f9fb}tbody tr:hover{background:#fff8f8}
 .vol-panel .panel-title h3 { font-size: 19px; }
 .vol-grid {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0,1fr));
+  grid-template-columns: repeat(3, minmax(0,1fr));
   gap: 12px;
   padding: 16px 18px 13px;
 }
