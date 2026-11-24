@@ -10,7 +10,11 @@ class RespostaFake:
     text = ""
 
     def json(self):
-        return {"rows": [["2", "4", "0"]]}
+        return {"rows": [
+            [None, "2", "4", "0"],
+            ["2026-11-19", "1", "1", "0"],
+            ["2026-11-20", "2", "3", "0"],
+        ]}
 
 
 class SessaoFake:
@@ -40,7 +44,15 @@ class ContagemRemessasUnicasTest(unittest.TestCase):
                         ["12", "11", "12"], 4, 10,
                     )
                 self.assertEqual(
-                    retorno, {"pacotes_unicos": 2, "acumulado": 4, "sem_remessa": 0}
+                    retorno, {
+                        "pacotes_unicos": 2, "acumulado": 4, "sem_remessa": 0,
+                        "evolucao": [
+                            {"data": "2026-11-19", "pacotes_unicos": 1,
+                             "acumulado": 1, "sem_remessa": 0},
+                            {"data": "2026-11-20", "pacotes_unicos": 2,
+                             "acumulado": 3, "sem_remessa": 0},
+                        ],
+                    }
                 )
                 chamada = sessao.chamadas[0]["json"]
                 self.assertEqual(
@@ -49,6 +61,7 @@ class ContagemRemessasUnicasTest(unittest.TestCase):
                 )
                 sql = chamada["sql"].upper()
                 self.assertIn("COUNT(DISTINCT", sql)
+                self.assertIn("GROUP BY GROUPING SETS", sql)
                 self.assertIn("SUM(D.PEDIDOS)", sql)
                 self.assertIn("D.AGING_VALOR >= %S", sql)
                 self.assertIn("D.AGING_VALOR <= %S", sql)
