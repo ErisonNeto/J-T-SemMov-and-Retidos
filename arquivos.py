@@ -166,6 +166,25 @@ def _consultar_resumo() -> pd.DataFrame:
             WHERE d.data >= %s::date
               AND d.base_codigo = ANY(%s::text[])
               AND d.indicador IN ('sem_mov', 'retidos')
+              -- Filtra remessas "fantasmas" ANTES de agregar, afetando todos
+              -- os indicadores, filtros de aging, rankings e downloads.
+              AND NOT EXISTS (
+                  SELECT 1
+                  FROM public.jt_arbitragem_ocorrencias AS a
+                  WHERE a.remessa = d.remessa
+                    AND a.tipo IN ('Avaria', 'Extravio', 'PNR')
+                    AND UPPER(BTRIM(COALESCE(a.status, ''))) IN (
+                        'PROCESSO ENCERRADO', 'ARBITRAGEM FINALIZADA'
+                    )
+                    -- Nao altera um snapshot anterior ao encerramento.
+                    -- Caso status seja final, mas sem data de fechamento,
+                    -- elimina a remessa por seguranca, em qualquer data.
+                    AND (
+                        NULLIF(LEFT(BTRIM(a.fechada_em::text), 10), '')::date
+                            <= d.data::date
+                        OR NULLIF(BTRIM(a.fechada_em::text), '') IS NULL
+                    )
+              )
             GROUP BY 1,2,3,4
             ORDER BY 2,1,3,4
         """
