@@ -58,7 +58,6 @@ function parametrosAging(){
 }
 function renderAgingConsulta(d){
  $('#consultaAgingFaixa').textContent='• '+(d.rotulo||'Aging');
- $('#consultaAgingUnicos').textContent=fmt(d.pacotes_unicos);
  $('#consultaAgingPedidos').textContent=fmt(d.total_pedidos);
  $('#consultaAgingUltimo').textContent=fmt(d.pedidos_ultimo_dia);
  $('#consultaAgingLinhas').textContent=fmt(d.total_linhas);
@@ -76,12 +75,24 @@ function renderAgingConsulta(d){
 async function loadAgingConsulta(){
  const req=++state.agingRequest, indicador=state.indicador;
  $('#consultaAgingStatus').textContent='Consultando os pacotes da faixa selecionada...';
+ $('#consultaUnicosAviso').textContent='';
  ['#consultaAgingUnicos','#consultaAgingPedidos','#consultaAgingUltimo','#consultaAgingLinhas'].forEach(x=>$(x).textContent='—');
  $('#consultaAgingBases').innerHTML='<tr><td colspan="4" class="empty">Consultando bases...</td></tr>';
  $('#consultaAgingDias').innerHTML='<tr><td colspan="3" class="empty">Consultando histórico...</td></tr>';
  try{
   if(!$('#fDataInicial').value||!$('#fDataFinal').value)return;
-  const d=await json('/api/consulta-aging?'+parametrosAging());
+  const parametros=parametrosAging();
+  // Consulta pesada independente: acumulado/evolucao carregam sem aguardar DISTINCT.
+  json('/api/pacotes-unicos?'+parametros).then(unicos=>{
+   if(req!==state.agingRequest||indicador!==state.indicador)return;
+   $('#consultaAgingUnicos').textContent=fmt(unicos.pacotes_unicos);
+   $('#consultaUnicosAviso').textContent=unicos.aviso||'';
+  }).catch(()=>{
+   if(req!==state.agingRequest||indicador!==state.indicador)return;
+   $('#consultaAgingUnicos').textContent='—';
+   $('#consultaUnicosAviso').textContent='Sem contagem única: verifique a JT API.';
+  });
+  const d=await json('/api/consulta-aging?'+parametros);
   if(req!==state.agingRequest||indicador!==state.indicador)return;
   renderAgingConsulta(d);
  }catch(e){
@@ -202,7 +213,7 @@ function renderSnapshot(d){
   campos.map(k=>'<th class="num">'+fmt(total[k]||0)+'</th>').join('')+'</tr>';
  $('#snapshotNote').textContent=d.aviso||'Comparar somente snapshots da mesma data.';
 }
-async function loadDashboard(){const request=++state.request;++state.agingRequest;document.body.setAttribute('aria-busy','true');limparResultadosAoFiltrar();$('#snapshotBody').innerHTML='<tr><td colspan="9" class="empty">Conferindo remessas do dia final...</td></tr>';$('#snapshotFoot').replaceChildren();$('#loadError').classList.add('hidden');try{if($('#fDataInicial').value>$('#fDataFinal').value){toast('Data inicial não pode ser maior que a final');return}const d=await json('/api/dashboard?'+q());if(request!==state.request)return;const fs=d.fonte||{};$('#sourceStatus').textContent=fs.fonte?fs.fonte+(fs.sincronizado_em?' • Sincronizado: '+new Date(fs.sincronizado_em).toLocaleString('pt-BR'):'')+(fs.consulta_segundos!==undefined?' • Consulta ao banco: '+fmt(fs.consulta_segundos)+' s':''):'';$('#sourceWarning').textContent=fs.aviso||'';$('#sourceWarning').classList.toggle('hidden',!fs.aviso);renderKpis(d);renderVolumetria(d);lineChart($('#evolutionChart'),d.evolucao);bars($('#agingBars'),d.aging);renderTables(d);loadAgingConsulta();
+async function loadDashboard(){const request=++state.request;++state.agingRequest;document.body.setAttribute('aria-busy','true');$('#consultaUnicosAviso').textContent='';['#consultaAgingUnicos','#consultaAgingPedidos','#consultaAgingUltimo','#consultaAgingLinhas'].forEach(s=>$(s).textContent='—');limparResultadosAoFiltrar();$('#snapshotBody').innerHTML='<tr><td colspan="9" class="empty">Conferindo remessas do dia final...</td></tr>';$('#snapshotFoot').replaceChildren();$('#loadError').classList.add('hidden');try{if($('#fDataInicial').value>$('#fDataFinal').value){toast('Data inicial não pode ser maior que a final');return}const d=await json('/api/dashboard?'+q());if(request!==state.request)return;const fs=d.fonte||{};$('#sourceStatus').textContent=fs.fonte?fs.fonte+(fs.sincronizado_em?' • Sincronizado: '+new Date(fs.sincronizado_em).toLocaleString('pt-BR'):'')+(fs.consulta_segundos!==undefined?' • Consulta ao banco: '+fmt(fs.consulta_segundos)+' s':''):'';$('#sourceWarning').textContent=fs.aviso||'';$('#sourceWarning').classList.toggle('hidden',!fs.aviso);renderKpis(d);renderVolumetria(d);lineChart($('#evolutionChart'),d.evolucao);bars($('#agingBars'),d.aging);renderTables(d);loadAgingConsulta();
 const sp=new URLSearchParams({indicador:state.indicador,data:$('#fDataFinal').value,uf:$('#fUf').value,sc:$('#fSc').value,base:$('#fBase').value});
 json('/api/snapshot?'+sp).then(snapshot=>{if(request===state.request)renderSnapshot(snapshot)}).catch(err=>{
  if(request===state.request){
