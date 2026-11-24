@@ -62,12 +62,18 @@ class TestConsultaAging(unittest.TestCase):
                 with patch("app.carregar", return_value=dados):
                     for corte, total in (("acima_1", 18), ("acima_3", 15),
                                          ("acima_10", 11)):
-                        resposta = consulta_aging(
-                            indicador=indicador, data_inicial="2026-11-13",
-                            data_final="2026-11-14", uf="", sc="", base="",
-                            aging=corte,
-                        )
+                        with patch(
+                            "app.consultar_contagem_remessas",
+                            return_value={"pacotes_unicos": 2, "acumulado": total,
+                                          "sem_remessa": 0},
+                        ):
+                            resposta = consulta_aging(
+                                indicador=indicador, data_inicial="2026-11-13",
+                                data_final="2026-11-14", uf="", sc="", base="",
+                                aging=corte,
+                            )
                         self.assertEqual(resposta["total_pedidos"], total)
+                        self.assertEqual(resposta["pacotes_unicos"], 2)
                         self.assertEqual(resposta["pedidos_ultimo_dia"],
                                          15 if corte != "acima_10" else 11)
 
@@ -77,7 +83,13 @@ class TestConsultaAging(unittest.TestCase):
         with self.assertRaises(HTTPException):
             _rotulo_faixa_aging("999")
         with self.assertRaises(HTTPException):
-            _rotulo_faixa_aging("1; DROP TABLE")\n        with self.assertRaises(HTTPException):\n            _rotulo_faixa_aging("acima_0")\n        with self.assertRaises(HTTPException):\n            _rotulo_faixa_aging("acima_366")\n        with self.assertRaises(HTTPException):\n            _rotulo_faixa_aging("acima_03")
+            _rotulo_faixa_aging("1; DROP TABLE")
+        with self.assertRaises(HTTPException):
+            _rotulo_faixa_aging("acima_0")
+        with self.assertRaises(HTTPException):
+            _rotulo_faixa_aging("acima_366")
+        with self.assertRaises(HTTPException):
+            _rotulo_faixa_aging("acima_03")
         self.assertEqual(_rotulo_faixa_aging("1"), "1 dia")
 
     def test_consulta_orlean_e_pedidos_do_ultimo_dia(self):
@@ -102,6 +114,40 @@ class TestConsultaAging(unittest.TestCase):
                 data_final="2026-11-14", uf="", sc="S/C 1", base="", aging="4mais"
             )
             self.assertEqual(result4["total_pedidos"], 4)
+
+    def test_pacotes_unicos_respeita_filtro_orlean_aging_e_base(self):
+        for indicador in ("sem_mov", "retidos"):
+            dados = self.df.copy()
+            dados["indicador"] = indicador
+            with patch("app.carregar", return_value=dados), patch(
+                "app.consultar_contagem_remessas",
+                return_value={"pacotes_unicos": 1, "acumulado": 4, "sem_remessa": 0},
+            ) as contagem:
+                resposta = consulta_aging(
+                    indicador=indicador, data_inicial="2026-11-13",
+                    data_final="2026-11-14", uf="PA", sc="S/C 1", base="11",
+                    aging="acima_3",
+                )
+                self.assertEqual(resposta["pacotes_unicos"], 1)
+                self.assertEqual(resposta["total_pedidos"], 4)
+                contagem.assert_called_once_with(
+                    indicador, "2026-11-13", "2026-11-14", ["11"], 4, None
+                )
+
+    def test_sem_remessa_ou_fonte_divergente_nao_inventa_total_unico(self):
+        for acumulado, sem_remessa in ((4, 1), (999, 0)):
+            with patch("app.carregar", return_value=self.df), patch(
+                "app.consultar_contagem_remessas",
+                return_value={"pacotes_unicos": 1, "acumulado": acumulado,
+                              "sem_remessa": sem_remessa},
+            ):
+                resposta = consulta_aging(
+                    indicador="sem_mov", data_inicial="2026-11-13",
+                    data_final="2026-11-14", uf="PA", sc="S/C 1", base="11",
+                    aging="acima_3",
+                )
+                self.assertIsNone(resposta["pacotes_unicos"])
+                self.assertEqual(resposta["total_pedidos"], 4)
 
     def test_nao_altera_kpi_oficial(self):
         self.assertEqual(limite_indicador("sem_mov"), 3)
