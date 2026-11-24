@@ -603,6 +603,10 @@ def download(
     df, inicio, fim = _consulta_aging_recorte(
         indicador, data_inicial, data_final, uf, sc, base, aging
     )
+    # Ausencia de snapshot regional no intervalo nao significa zero operacional.
+    dias_publicados = set(datas_disponiveis(carregar(), indicador))
+    faltantes = [d for d in datas_entre(date.fromisoformat(inicio), date.fromisoformat(fim))
+                if d not in dias_publicados]
     resumo = {
         'indicador': indicador,
         'faixa': aging,
@@ -611,6 +615,7 @@ def download(
         'total_pedidos': int(df['pedidos'].sum()),
         'total_linhas': int(df['linhas'].sum()),
         'ultimo_dia': fim,
+        'dias_sem_carga': faltantes,
         'pedidos_ultimo_dia': int(df.loc[df.data == fim, 'pedidos'].sum()),
         'evolucao': [], 'bases': [], 'scs': [], 'aging_dias': [],
         'aviso': (
@@ -618,6 +623,9 @@ def download(
             'Uma remessa pode constar em mais de um dia. '
             'Linhas nao significam necessariamente remessas distintas. '
             'Os KPIs oficiais 4+ e 11+ permanecem inalterados.'
+            + (' ATENCAO: sem snapshot em ' + ', '.join(faltantes[:6])
+               + ('...' if len(faltantes) > 6 else '') + '.'
+               if faltantes else '')
         ),
     }
     if df.empty:
