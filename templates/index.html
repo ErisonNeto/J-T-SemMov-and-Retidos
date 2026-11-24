@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>J&amp;T | Sem Movimentação e Retidos</title>
-  <link rel="stylesheet" href="/static/style.css?v=20261123-kpi-sla">
+  <link rel="stylesheet" href="/static/style.css?v=20261124-aging-tool-v1">
 </head>
 <body>
   <header class="topbar shipping-style-header">
@@ -36,8 +36,60 @@
         <div class="filter"><label for="fUf">UF</label><select id="fUf"><option value="">Todas</option></select></div>
         <div class="filter"><label for="fSc">S/C</label><select id="fSc"><option value="">Todos</option></select></div>
         <div class="filter wide"><label for="fBase">Base</label><select id="fBase"><option value="">Todas</option></select></div>
+        <div class="filter aging-filter">
+          <label for="fAging">Aging — consulta operacional</label>
+          <select id="fAging" aria-label="Selecionar faixa exata ou intervalo de aging para consulta operacional">
+            <option value="4mais" selected>4 dias ou mais</option>
+            <option value="11mais">11 dias ou mais</option>
+            <option value="todos">Todos (1 dia em diante)</option>
+            <option value="1a3">1 a 3 dias</option>
+            <option value="4a10">4 a 10 dias</option>
+            <option value="11a15">11 a 15 dias</option>
+            <option value="16a30">16 a 30 dias</option>
+            <option value="31mais">31 dias ou mais</option>
+          </select>
+        </div>
         <button id="btnClear" class="secondary">Limpar filtros</button>
       </div>
+    </section>
+
+
+    <section class="panel aging-tool" aria-label="Ferramenta operacional de consulta por aging">
+      <div class="panel-title aging-tool-head">
+        <div>
+          <span class="section-kicker">FERRAMENTA OPERACIONAL</span>
+          <h3>Consulta de pacotes por dias de aging <span id="consultaAgingFaixa">• 4 dias ou mais</span></h3>
+          <p>Utiliza data, base, S/C e UF selecionados acima. Selecione 1, 2, 3, 4... dias ou uma faixa. Os KPIs oficiais permanecem 4+ e 11+ dias.</p>
+        </div>
+        <button type="button" id="btnExportAging" class="download">Exportar consulta CSV</button>
+      </div>
+      <div class="aging-tool-kpis">
+        <div><span>Pedidos no período</span><strong id="consultaAgingPedidos">—</strong></div>
+        <div><span>Pedidos no último dia selecionado</span><strong id="consultaAgingUltimo">—</strong></div>
+        <div><span>Linhas da fonte no período</span><strong id="consultaAgingLinhas">—</strong></div>
+      </div>
+      <div id="consultaAgingStatus" class="aging-tool-note" role="status">Aguardando consulta...</div>
+      <div class="aging-tool-results">
+        <div class="aging-tool-table">
+          <h4>Bases nesta faixa</h4>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>Base</th><th>S/C</th><th>Pedidos</th><th>Linhas</th></tr></thead>
+              <tbody id="consultaAgingBases"><tr><td colspan="4" class="empty">Selecione uma faixa para consultar.</td></tr></tbody>
+            </table>
+          </div>
+        </div>
+        <div class="aging-tool-table">
+          <h4>Evolução por dia</h4>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>Data</th><th>Pedidos</th><th>Linhas</th></tr></thead>
+              <tbody id="consultaAgingDias"><tr><td colspan="3" class="empty">Sem consulta realizada.</td></tr></tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+      <p class="metric-note">Consulta exploratória: contagem acumulativa de snapshots. Uma mesma remessa pode aparecer em mais de um dia. O CSV contém quantitativos por data, base e aging — não números individuais de remessa.</p>
     </section>
 
     <p id="sourceStatus" class="hint"></p>
@@ -155,6 +207,6 @@
   </main>
 
   <div id="toast" class="toast"></div>
-  <script src="/static/app.js?v=20261124-retidos-4mais"></script>
+  <script src="/static/app.js?v=20261124-aging-tool-v1"></script>
 </body>
 </html>
