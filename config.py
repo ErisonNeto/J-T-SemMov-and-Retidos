@@ -47,3 +47,6 @@ METAS_PERCENTUAIS = {
         _meta("META_PCT_RETIDOS_SLA") if os.getenv("META_PCT_RETIDOS_SLA") else 3.0
     ),
 }
+
+# Limites mínimos aceitáveis (quanto menor, melhor), KPI Gestores/LM.
+MINIMOS_PERCENTUAIS={'sem_mov':6.0,'retidos_aging':7.0,'retidos_sla_vencido':7.0}

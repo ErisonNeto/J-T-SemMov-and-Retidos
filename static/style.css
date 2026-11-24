@@ -1266,3 +1266,5 @@ th{background:#f8f9fb}tbody tr:hover{background:#fff8f8}
   .aging-tool-kpis { grid-template-columns: 1fr; }
   .aging-tool-results, .aging-tool-kpis { padding-left: 12px; padding-right: 12px; }
 }
+
+.warning,.vol-meta.warning{color:#926000!important;}

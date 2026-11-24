@@ -7,7 +7,7 @@ from fastapi import FastAPI, HTTPException, Query
 from fastapi.responses import HTMLResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
-from config import METAS, METAS_PERCENTUAIS
+from config import METAS, METAS_PERCENTUAIS, MINIMOS_PERCENTUAIS
 from arquivos import carregar, status_fonte, carregar_volumetria, consultar_contagem_remessas, consultar_remessas_unicas_semanas
 from exclusoes import sc_excluido
 
@@ -71,12 +71,14 @@ def percentuais_da_volumetria(raw, volume, inicio, fim, uf='', sc='', base='', e
         'percentual': None, 'pedidos': None, 'limiar_dias': 3,
         'criterio': 'sem movimentacao > 3 dias (4 dias ou mais; DC/CD pendente de validacao)',
         'meta_percentual': METAS_PERCENTUAIS['sem_mov'],
+        'minimo_percentual': MINIMOS_PERCENTUAIS['sem_mov'],
         'dentro_meta': None,
     }
     ret_v = {
         'percentual': None, 'pedidos': None, 'limiar_dias': 3,
         'criterio': 'retidos com aging > 3 dias (4 dias ou mais); vencimento do SLA nao verificado',
         'meta_percentual': METAS_PERCENTUAIS['retidos_aging'],
+        'minimo_percentual': MINIMOS_PERCENTUAIS['retidos_aging'],
         'dentro_meta': None,
     }
     # A fonte atual nao tem prazo de vencimento por remessa. Nao e possivel
@@ -86,6 +88,7 @@ def percentuais_da_volumetria(raw, volume, inicio, fim, uf='', sc='', base='', e
         'percentual': None, 'pedidos': None, 'limiar_dias_apos_vencimento': 3,
         'criterio': 'pedidos com mais de 3 dias apos o prazo de vencimento',
         'meta_percentual': METAS_PERCENTUAIS['retidos_sla_vencido'],
+        'minimo_percentual': MINIMOS_PERCENTUAIS['retidos_sla_vencido'],
         'dentro_meta': None,
         'status': 'aguardando_data_de_vencimento',
     }
@@ -318,10 +321,12 @@ def dashboard(
                 'sem_mov': {'percentual': None, 'pedidos': None},
                 'retidos': {'percentual': None, 'pedidos': None,
                             'meta_percentual': METAS_PERCENTUAIS['retidos_aging'],
+        'minimo_percentual': MINIMOS_PERCENTUAIS['retidos_aging'],
                             'dentro_meta': None},
                 'retidos_sla': {
                     'percentual': None, 'pedidos': None,
                     'meta_percentual': METAS_PERCENTUAIS['retidos_sla_vencido'],
+        'minimo_percentual': MINIMOS_PERCENTUAIS['retidos_sla_vencido'],
                     'dentro_meta': None, 'status': 'aguardando_data_de_vencimento',
                 },
                 'aviso': 'Sem periodo disponivel',

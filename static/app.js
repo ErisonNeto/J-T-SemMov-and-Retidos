@@ -126,13 +126,15 @@ function renderVolumetria(d){
  const sem=v.sem_mov||{},ret=v.retidos||{};
  const pct=n=>n===null||n===undefined?'—':Number(n).toLocaleString('pt-BR',{minimumFractionDigits:2,maximumFractionDigits:2})+'%';
  const metaKpi=(el,item)=>{
-  el.classList.remove('good','bad');
+  el.classList.remove('good','warning','bad');
   const alvo=item.meta_percentual;
   if(alvo===null||alvo===undefined){el.textContent='Meta não cadastrada';return}
-  let texto='Referência da 1ª coluna ≤ '+pct(alvo);
-  if(item.dentro_meta===true){texto+=' • dentro da referência';el.classList.add('good')}
-  else if(item.dentro_meta===false){texto+=' • acima da referência';el.classList.add('bad')}
-  else texto+=' • sem avaliação';
+  let texto='Meta ≤ '+pct(alvo)+' · limite aceitável ≤ '+pct(item.minimo_percentual);
+  const v=item.percentual;
+  if(v==null)texto+=' • sem avaliação';
+  else if(v<=alvo){texto+=' • meta atingida';el.classList.add('good')}
+  else if(v<=item.minimo_percentual){texto+=' • mínimo atingido';el.classList.add('warning')}
+  else {texto+=' • fora do mínimo';el.classList.add('bad')}
   el.textContent=texto;
  };
  $('#volTotal').textContent=fmt(v.total);
@@ -144,6 +146,7 @@ function renderVolumetria(d){
   ?'Sem dados suficientes para calcular'
   :fmt(sem.pedidos)+' pedidos com 4+ dias sem movimentação ÷ '+fmt(v.total)+' volumes';
  metaKpi($('#pctSemMovMeta'),sem);
+ for(const [id,item] of [['pctSemMov',sem],['pctRetidos',ret]]){const el=$('#'+id);el.classList.remove('good','warning','bad');if(item.percentual!=null&&item.meta_percentual!=null)el.classList.add(item.percentual<=item.meta_percentual?'good':item.percentual<=item.minimo_percentual?'warning':'bad');}
  $('#pctRetidos').textContent=pct(ret.percentual);
  $('#pctRetidosInfo').textContent=ret.pedidos===null||ret.pedidos===undefined
   ?'Sem dados suficientes para calcular'
