@@ -553,165 +553,7 @@ def consulta_aging(
 
 @app.get('/api/pacotes-unicos')
 def pacotes_unicos(
-    indicador: str = Query(pattern='^(sem_mov|retidos)
-def consulta_aging_csv(
     indicador: str = Query(pattern='^(sem_mov|retidos)$'),
-    data_inicial: str = '',
-    data_final: str = '',
-    uf: str = '', sc: str = '', base: str = '',
-    aging: str = '4mais',
-):
-    """Exporta resumo agregado. Nao expoe IDs de remessas na web publica."""
-    df, inicio, fim, _ = _consulta_aging_recorte(
-        indicador, data_inicial, data_final, uf, sc, base, aging
-    )
-    cols = ["data", "base_codigo", "base_nome", "sc",
-            "aging_valor", "pedidos", "linhas"]
-    recorte = df[cols].sort_values(["data", "base_nome", "aging_valor"])
-
-    def safe(v):
-        valor = str(v) if v is not None else ""
-        return "'" + valor if valor.lstrip().startswith(("=", "+", "-", "@")) else valor
-
-    def stream():
-        yield "\ufeff"
-        buf = io.StringIO()
-        writer = csv.writer(buf, delimiter=";")
-        writer.writerow(["Data", "Codigo da base", "Base", "S/C",
-                         "Aging (dias)", "Pedidos (soma)", "Linhas da fonte"])
-        yield buf.getvalue()
-        buf.seek(0)
-        buf.truncate(0)
-        for row in recorte.itertuples(index=False, name=None):
-            writer.writerow([safe(v) for v in row])
-            yield buf.getvalue()
-            buf.seek(0)
-            buf.truncate(0)
-
-    return StreamingResponse(
-        stream(),
-        media_type="text/csv",
-        headers={"Content-Disposition":
-                 f'attachment; filename="consulta_aging_{indicador}_{aging}_{inicio}_a_{fim}.csv"'},
-    )
-
-
-@app.get('/api/snapshot')
-def snapshot(
-    indicador: str = Query(pattern='^(sem_mov|retidos)$'),
-    data: str = '',
-    uf: str = '', sc: str = '', base: str = '',
-):
-    """Retrato do ÚNICO DIA selecionado: remessas por 1/2/3/4/5+ dias.
-
-    Diferente do KPI de pedidos acumulados em uma semana, esta tabela soma
-    COUNT(*) (linhas de remessa) na data exata do snapshot. Não soma uma mesma
-    remessa em vários dias.
-    """
-    raw = carregar()
-    datas = datas_disponiveis(raw, indicador)
-    if not datas:
-        return {
-            'indicador': indicador, 'data': None, 'bases': [],
-            'total': {'d1': 0, 'd2': 0, 'd3': 0, 'd4': 0,
-                      'acima4': 0, 'total': 0, 'acima3': 0, 'pedidos_acima3': 0},
-        }
-    dia = data or datas[-1]
-    try:
-        date.fromisoformat(dia)
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail='Data inválida. Use AAAA-MM-DD.') from exc
-    # Exige data disponível na origem, não inventa valor zerado para dia ausente.
-    if dia not in datas:
-        raise HTTPException(
-            status_code=404,
-            detail=f'Não há snapshot de {dia} para {indicador} no banco.',
-        )
-
-    df = filtrar(raw, indicador, uf, sc, base)
-    df = df[df.data == dia]
-    campos = ('d1', 'd2', 'd3', 'd4', 'acima4', 'total', 'acima3', 'pedidos_acima3')
-    bases = {}
-    for r in df.itertuples(index=False):
-        codigo = str(r.base_codigo)
-        item = bases.setdefault(
-            codigo,
-            {
-                'base_codigo': codigo, 'base_nome': str(r.base_nome),
-                'sc': str(r.sc), **{k: 0 for k in campos},
-            },
-        )
-        age = int(r.aging_valor or 0)
-        # linhas = COUNT(*) de remessas no PostgreSQL (não pedidos).
-        linhas = int(r.linhas or 0)
-        pedidos = int(r.pedidos or 0)
-        item['total'] += linhas
-        if 1 <= age <= 4:
-            item[f'd{age}'] += linhas
-        elif age > 4:
-            item['acima4'] += linhas
-        if age > limite_indicador(indicador):
-            item['acima3'] += linhas
-            item['pedidos_acima3'] += pedidos
-
-    lista = sorted(
-        bases.values(),
-        key=lambda item: (-item['total'], item['base_nome'], item['base_codigo']),
-    )
-    total = {c: sum(item[c] for item in lista) for c in campos}
-    return {
-        'indicador': indicador, 'data': dia, 'bases': lista, 'total': total,
-        'sem_remessas': not bool(lista),
-        'aviso': (
-            'Retrato de um único dia. Contagem de remessas (COUNT), não pedidos. '
-            + ('Sem Mov: mais de 3 dias (4 dias ou mais). ' if indicador == 'sem_mov'
-               else 'Retidos: 4 dias ou mais. ')
-            + 'Só compare com planilha da mesma data, bases e faixas de dias.'
-        ),
-    }
-
-
-@app.get('/api/download')
-def download(
-    indicador: str = Query(pattern='^(sem_mov|retidos)$'),
-    data_inicial: str = '',
-    data_final: str = '',
-    corte: str = Query(default='3', pattern='^(3|10)$'),
-    uf: str = '', sc: str = '', base: str = '',
-):
-    raw = carregar()
-    inicio_data, fim_data, _ = resolver_periodo(raw, indicador, data_inicial, data_final)
-    if inicio_data is None or fim_data is None:
-        raise HTTPException(status_code=404, detail='Não há dados carregados para este indicador.')
-
-    inicio_iso = inicio_data.isoformat()
-    fim_iso = fim_data.isoformat()
-    df = filtrar(raw, indicador, uf, sc, base)
-    df = df[(df.data >= inicio_iso) & (df.data <= fim_iso)]
-    limite = limite_indicador(indicador) if corte == '3' else 10
-    df = df[df.aging_valor > limite]
-
-    def stream():
-        def safe(v):
-            return "'" + v if isinstance(v, str) and v.lstrip().startswith(('=', '+', '-', '@')) else v
-
-        yield '\ufeff'
-        buf = io.StringIO()
-        writer = csv.writer(buf, delimiter=';')
-        writer.writerow(df.columns)
-        yield buf.getvalue()
-        buf.seek(0); buf.truncate(0)
-        for row in df.itertuples(index=False, name=None):
-            writer.writerow([safe(v) for v in row])
-            yield buf.getvalue()
-            buf.seek(0); buf.truncate(0)
-
-    return StreamingResponse(
-        stream(),
-        media_type='text/csv',
-        headers={'Content-Disposition': f'attachment; filename="resumo_{indicador}_{inicio_iso}_a_{fim_iso}_acima_{corte}.csv"'},
-    )
-),
     data_inicial: str = '',
     data_final: str = '',
     uf: str = '', sc: str = '', base: str = '',
@@ -731,7 +573,7 @@ def download(
     if df.empty:
         return resposta
 
-    # Os codigos de bases filtrados ja respeitam R/M Orlean, S/C, UF e base.
+    # Os codigos filtrados ja respeitam R/M Orlean, S/C, UF e base.
     _, minimo, maximo = _faixa_limites(aging)
     codigos = sorted({
         str(x) for x in df["base_codigo"].dropna().unique() if str(x)
@@ -753,8 +595,7 @@ def download(
         else:
             resposta["pacotes_unicos"] = contagem["pacotes_unicos"]
     except Exception:
-        # A consulta pesada nao deve interromper o acumulado, ranking ou
-        # evolucao. Nunca exibir numero estimado como contagem exata.
+        # A consulta de detalhes nao deve interromper o acumulado/ranking.
         resposta["aviso"] = (
             "Pacotes unicos indisponiveis: nao foi possivel consultar "
             "os detalhes no PostgreSQL pela JT API."
