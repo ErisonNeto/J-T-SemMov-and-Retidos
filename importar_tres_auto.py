@@ -49,6 +49,14 @@ def tipo_arquivo(path: Path) -> str | None:
     return None
 
 
+def eh_retidos_resumo(path: Path) -> bool:
+    """Resumo nao traz remessas individuais e nao pode ser importado."""
+    nome = core.normalizar(path.stem)
+    return tipo_arquivo(path) == "retidos" and (
+        "(resumo)" in nome or " resumo" in nome
+    )
+
+
 def localizar_operacionais(entrada: Path) -> list[Path]:
     """Busca as tres fontes na estrutura existente, sem incluir arquivos de apoio.
 
@@ -154,7 +162,27 @@ def main() -> None:
     if entrada == DADOS.resolve():
         DADOS.mkdir(parents=True, exist_ok=True)
     candidatos = localizar_operacionais(entrada)
-    tipos = [(p, tipo_arquivo(p)) for p in candidatos]
+    resumos_retidos = [p for p in candidatos if eh_retidos_resumo(p)]
+    if resumos_retidos:
+        for resumo in resumos_retidos:
+            print(
+                f"RETIDOS RESUMO IGNORADO: {resumo.name}. "
+                "Essa exportacao nao contem remessas individuais; "
+                "baixe (Detalhes) no JMS.",
+                flush=True,
+            )
+    tipos = [
+        (p, tipo_arquivo(p)) for p in candidatos if not eh_retidos_resumo(p)
+    ]
+    if resumos_retidos and not any(tipo == "retidos" for _, tipo in tipos):
+        raise RuntimeError(
+            "Foi encontrado somente Retidos (Resumo). "
+            "Exportar Estatistica de itens retidos na base (dias corridos) "
+            "na opcao (Detalhes), com Remessa, Pedidos, Codigo da Base "
+            "e Tempo de retencao. A carga foi interrompida sem enviar "
+            "dados novos: nao e possivel deduplicar ou excluir pacotes "
+            "arbitrados usando o Resumo."
+        )
     desconhecidos = [p.name for p, t in tipos if t is None]
     if desconhecidos:
         print("ARQUIVOS NAO RECONHECIDOS (ignorados): " + ", ".join(desconhecidos))
