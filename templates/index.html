@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>J&amp;T | Sem Movimentação e Retidos</title>
-  <link rel="stylesheet" href="/static/style.css?v=20261124-unique-v4">
+  <link rel="stylesheet" href="/static/style.css?v=20261124-unique-v5">
 </head>
 <body>
   <header class="topbar shipping-style-header">
@@ -97,13 +97,13 @@
           <h4>Evolução por dia</h4>
           <div class="table-wrap">
             <table>
-              <thead><tr><th>Data</th><th>Pedidos</th><th>Linhas</th></tr></thead>
+              <thead><tr><th>Data</th><th>Pedidos (soma do dia)</th><th>Pacotes únicos no dia</th></tr></thead>
               <tbody id="consultaAgingDias"><tr><td colspan="3" class="empty">Sem consulta realizada.</td></tr></tbody>
             </table>
           </div>
         </div>
       </div>
-      <p class="metric-note">Pacotes únicos: cada remessa é contada uma vez no período, com o Aging selecionado. Acumulado: soma os pedidos de todos os dias, inclusive quando uma remessa reaparece. Ambos desconsideram arbitragens finalizadas. O CSV mantém os totais por data/base/Aging, sem identificar remessas.</p>
+      <p class="metric-note">Pedidos = soma das quantidades da planilha (podem existir mais pedidos que linhas). Linhas da fonte = quantidade de registros importados, não o total sem duplicidade. Pacotes únicos = cada número de remessa contado uma vez por período ou por dia. O acumulado soma os snapshots; a mesma remessa pode reaparecer em vários dias. Arbitragens encerradas são desconsideradas.</p>
     </section>
 
     <p id="sourceStatus" class="hint"></p>
@@ -151,20 +151,21 @@
       <p class="vol-aviso" id="volAviso" role="status"></p>
     </section>
 
+    <p class="metric-note" id="comparisonUniqueAviso" role="status">Pacotes únicos: cada número de remessa entra uma vez por semana, mesmo quando reaparece em vários dias.</p>
     <section class="kpi-grid" aria-label="Resultados da semana">
       <article class="kpi-card">
         <div class="kpi-head"><h3>Quantidade Total <span class="indicador-limiar">(4 dias ou mais)</span></h3><span id="meta3" class="meta" hidden></span></div>
         <div class="comparison">
-          <div><label id="lblPrev3">Semana anterior</label><strong id="prev3">—</strong></div>
-          <div><label id="lblCur3">Semana selecionada</label><strong id="cur3">—</strong></div>
+          <div><label id="lblPrev3">Semana anterior</label><strong id="prev3">—</strong><small class="comparison-type">Pedidos acumulados</small><div class="comparison-unique">Pacotes únicos <b id="prevUnique3">—</b></div></div>
+          <div><label id="lblCur3">Semana selecionada</label><strong id="cur3">—</strong><small class="comparison-type">Pedidos acumulados</small><div class="comparison-unique">Pacotes únicos <b id="curUnique3">—</b></div></div>
           <div><label id="lblVar3">Variação semanal</label><strong id="var3">—</strong></div>
         </div>
       </article>
       <article class="kpi-card">
         <div class="kpi-head"><h3>Quantidade Total <span>(Acima de 10 dias)</span></h3><span id="meta10" class="meta" hidden></span></div>
         <div class="comparison">
-          <div><label id="lblPrev10">Semana anterior</label><strong id="prev10">—</strong></div>
-          <div><label id="lblCur10">Semana selecionada</label><strong id="cur10">—</strong></div>
+          <div><label id="lblPrev10">Semana anterior</label><strong id="prev10">—</strong><small class="comparison-type">Pedidos acumulados</small><div class="comparison-unique">Pacotes únicos <b id="prevUnique10">—</b></div></div>
+          <div><label id="lblCur10">Semana selecionada</label><strong id="cur10">—</strong><small class="comparison-type">Pedidos acumulados</small><div class="comparison-unique">Pacotes únicos <b id="curUnique10">—</b></div></div>
           <div><label id="lblVar10">Variação semanal</label><strong id="var10">—</strong></div>
         </div>
       </article>
@@ -222,6 +223,6 @@
   </main>
 
   <div id="toast" class="toast"></div>
-  <script src="/static/app.js?v=20261124-unique-v4"></script>
+  <script src="/static/app.js?v=20261124-unique-v5"></script>
 </body>
 </html>
