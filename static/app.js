@@ -33,19 +33,27 @@ async function loadFilters(ind=state.indicador){const f=await json('/api/filters
 
 function criarOpcoesAging(){
  const seletor=$('#fAging');
- const opcao=seletor.options[0];
- // 1..30 dias exatos, alem das faixas ja definidas no HTML.
+ const grupoAcima=$('#grupoAgingAcima');
+ const grupoExatos=$('#grupoAgingExatos');
+ // Acima de 1 dia = pacotes a partir de 2 dias; acima de 3 = 4+.
+ // Ambos os indicadores compartilham essa consulta, separada dos KPIs oficiais.
+ for(let i=1;i<=60;i++){
+  const opt=document.createElement('option');
+  opt.value='acima_'+i;
+  opt.textContent='Acima de '+i+(i===1?' dia':' dias')+' ('+(i+1)+'+ dias)';
+  grupoAcima.appendChild(opt);
+ }
  for(let i=1;i<=30;i++){
   const opt=document.createElement('option');
   opt.value=String(i);
   opt.textContent=i===1?'Exatamente 1 dia':'Exatamente '+i+' dias';
-  seletor.insertBefore(opt,opcao);
+  grupoExatos.appendChild(opt);
  }
- seletor.value='4mais';
+ seletor.value='acima_3';
 }
 function parametrosAging(){
  const p=q();
- p.set('aging',$('#fAging').value||'4mais');
+ p.set('aging',$('#fAging').value||'acima_3');
  return p;
 }
 function renderAgingConsulta(d){
@@ -208,7 +216,7 @@ async function switchTab(ind){++state.request;++state.agingRequest;state.indicad
  $('#downloadBtn').textContent='Baixar base '+limiar;['3','10'].forEach(c=>{['prev','cur','var'].forEach(k=>$('#'+k+c).textContent='—');$('#meta'+c).textContent='Meta —'});['evolutionChart','agingBars','basesBody','scBody'].forEach(id=>$('#'+id).replaceChildren());['#fUf','#fSc','#fBase'].forEach(s=>$(s).value='');document.body.setAttribute('aria-busy','true');try{await loadFilters(ind);if(state.indicador===ind)await loadDashboard()}catch(e){if(state.indicador===ind){document.body.setAttribute('aria-busy','false');toast('Erro ao carregar filtros. Tente novamente.')}}}
 $$('.tab').forEach(t=>t.onclick=()=>switchTab(t.dataset.indicador));
 ['#fDataInicial','#fDataFinal','#fUf','#fSc','#fBase'].forEach(s=>$(s).onchange=()=>loadDashboard());
-$('#btnClear').onclick=()=>{['#fUf','#fSc','#fBase'].forEach(s=>$(s).value='');$('#fAging').value='4mais';loadDashboard()};
+$('#btnClear').onclick=()=>{['#fUf','#fSc','#fBase'].forEach(s=>$(s).value='');$('#fAging').value='acima_3';loadDashboard()};
 $('#downloadBtn').onclick=()=>{const p=new URLSearchParams({indicador:state.indicador,data_inicial:$('#fDataInicial').value,data_final:$('#fDataFinal').value,corte:'3',uf:$('#fUf').value,sc:$('#fSc').value,base:$('#fBase').value});window.location='/api/download?'+p};
 criarOpcoesAging();
 $('#fAging').onchange=()=>loadAgingConsulta();
