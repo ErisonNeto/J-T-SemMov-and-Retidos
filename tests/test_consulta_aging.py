@@ -9,6 +9,7 @@ from app import (
     _rotulo_faixa_aging,
     consulta_aging,
     pacotes_unicos,
+    comparacao_pacotes_unicos,
     limite_indicador,
     quantidades,
 )
@@ -66,7 +67,7 @@ class TestConsultaAging(unittest.TestCase):
                         with patch(
                             "app.consultar_contagem_remessas",
                             return_value={"pacotes_unicos": 2, "acumulado": total,
-                                          "sem_remessa": 0},
+                                          "sem_remessa": 0, "evolucao": []},
                         ):
                             resposta = consulta_aging(
                                 indicador=indicador, data_inicial="2026-11-13",
@@ -102,8 +103,8 @@ class TestConsultaAging(unittest.TestCase):
         with patch("app.carregar", return_value=self.df), patch(
             "app.consultar_contagem_remessas",
             side_effect=[
-                {"pacotes_unicos": 1, "acumulado": 2, "sem_remessa": 0},
-                {"pacotes_unicos": 1, "acumulado": 4, "sem_remessa": 0},
+                {"pacotes_unicos": 1, "acumulado": 2, "sem_remessa": 0, "evolucao": []},
+                {"pacotes_unicos": 1, "acumulado": 4, "sem_remessa": 0, "evolucao": []},
             ],
         ):
             resultado = consulta_aging(
@@ -127,7 +128,7 @@ class TestConsultaAging(unittest.TestCase):
             dados["indicador"] = indicador
             with patch("app.carregar", return_value=dados), patch(
                 "app.consultar_contagem_remessas",
-                return_value={"pacotes_unicos": 1, "acumulado": 4, "sem_remessa": 0},
+                return_value={"pacotes_unicos": 1, "acumulado": 4, "sem_remessa": 0, "evolucao": []},
             ) as contagem:
                 resposta = pacotes_unicos(
                     indicador=indicador, data_inicial="2026-11-13",
@@ -145,7 +146,7 @@ class TestConsultaAging(unittest.TestCase):
             with patch("app.carregar", return_value=self.df), patch(
                 "app.consultar_contagem_remessas",
                 return_value={"pacotes_unicos": 1, "acumulado": acumulado,
-                              "sem_remessa": sem_remessa},
+                              "sem_remessa": sem_remessa, "evolucao": []},
             ):
                 resposta = pacotes_unicos(
                     indicador="sem_mov", data_inicial="2026-11-13",
@@ -154,6 +155,54 @@ class TestConsultaAging(unittest.TestCase):
                 )
                 self.assertIsNone(resposta["pacotes_unicos"])
                 self.assertEqual(resposta["acumulado"], 4)
+
+    def test_comparacao_semanal_mostra_unicos_em_4_e_11_nos_dois_paineis(self):
+        for indicador in ("sem_mov", "retidos"):
+            dados = self.df.copy()
+            dados["indicador"] = indicador
+            retorno_banco = {
+                "atual": {
+                    "unicos_4": 2, "unicos_11": 1,
+                    "acumulado_4": 15, "acumulado_11": 11,
+                    "sem_remessa_4": 0, "sem_remessa_11": 0,
+                },
+            }
+            with patch("app.carregar", return_value=dados), patch(
+                "app.consultar_remessas_unicas_semanas",
+                return_value=retorno_banco,
+            ) as consulta:
+                resultado = comparacao_pacotes_unicos(
+                    indicador=indicador, data_inicial="2026-11-13",
+                    data_final="2026-11-14", uf="", sc="", base=""
+                )
+                self.assertEqual(resultado["atual"]["acima_3"], 2)
+                self.assertEqual(resultado["atual"]["acima_10"], 1)
+                self.assertEqual(resultado["anterior"]["acima_3"], 0)
+                self.assertEqual(resultado["anterior"]["acima_10"], 0)
+                consulta.assert_called_once_with(
+                    indicador, "2026-11-11", "2026-11-13",
+                    "2026-11-14", ["11", "22"]
+                )
+
+    def test_comparacao_nao_exibe_unico_quando_falta_remessa(self):
+        dados = self.df.copy()
+        with patch("app.carregar", return_value=dados), patch(
+            "app.consultar_remessas_unicas_semanas",
+            return_value={
+                "atual": {
+                    "unicos_4": 1, "unicos_11": 1,
+                    "acumulado_4": 15, "acumulado_11": 11,
+                    "sem_remessa_4": 1, "sem_remessa_11": 0,
+                }
+            },
+        ):
+            resultado = comparacao_pacotes_unicos(
+                indicador="sem_mov", data_inicial="2026-11-13",
+                data_final="2026-11-14", uf="", sc="", base=""
+            )
+        self.assertIsNone(resultado["atual"]["acima_3"])
+        self.assertEqual(resultado["atual"]["acima_10"], 1)
+        self.assertIn("remessa em branco", resultado["aviso"])
 
     def test_nao_altera_kpi_oficial(self):
         self.assertEqual(limite_indicador("sem_mov"), 3)
