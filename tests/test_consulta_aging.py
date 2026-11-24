@@ -8,6 +8,7 @@ from app import (
     _aplicar_faixa_aging,
     _rotulo_faixa_aging,
     consulta_aging,
+    pacotes_unicos,
     limite_indicador,
     quantidades,
 )
@@ -72,8 +73,13 @@ class TestConsultaAging(unittest.TestCase):
                                 data_final="2026-11-14", uf="", sc="", base="",
                                 aging=corte,
                             )
+                            unicos = pacotes_unicos(
+                                indicador=indicador, data_inicial="2026-11-13",
+                                data_final="2026-11-14", uf="", sc="", base="",
+                                aging=corte,
+                            )
                         self.assertEqual(resposta["total_pedidos"], total)
-                        self.assertEqual(resposta["pacotes_unicos"], 2)
+                        self.assertEqual(unicos["pacotes_unicos"], 2)
                         self.assertEqual(resposta["pedidos_ultimo_dia"],
                                          15 if corte != "acima_10" else 11)
 
@@ -123,13 +129,13 @@ class TestConsultaAging(unittest.TestCase):
                 "app.consultar_contagem_remessas",
                 return_value={"pacotes_unicos": 1, "acumulado": 4, "sem_remessa": 0},
             ) as contagem:
-                resposta = consulta_aging(
+                resposta = pacotes_unicos(
                     indicador=indicador, data_inicial="2026-11-13",
                     data_final="2026-11-14", uf="PA", sc="S/C 1", base="11",
                     aging="acima_3",
                 )
                 self.assertEqual(resposta["pacotes_unicos"], 1)
-                self.assertEqual(resposta["total_pedidos"], 4)
+                self.assertEqual(resposta["acumulado"], 4)
                 contagem.assert_called_once_with(
                     indicador, "2026-11-13", "2026-11-14", ["11"], 4, None
                 )
@@ -141,13 +147,13 @@ class TestConsultaAging(unittest.TestCase):
                 return_value={"pacotes_unicos": 1, "acumulado": acumulado,
                               "sem_remessa": sem_remessa},
             ):
-                resposta = consulta_aging(
+                resposta = pacotes_unicos(
                     indicador="sem_mov", data_inicial="2026-11-13",
                     data_final="2026-11-14", uf="PA", sc="S/C 1", base="11",
                     aging="acima_3",
                 )
                 self.assertIsNone(resposta["pacotes_unicos"])
-                self.assertEqual(resposta["total_pedidos"], 4)
+                self.assertEqual(resposta["acumulado"], 4)
 
     def test_nao_altera_kpi_oficial(self):
         self.assertEqual(limite_indicador("sem_mov"), 3)
