@@ -5,7 +5,7 @@ Le somente a planilha de volume de outlet, a Gestao publicada e os
 indicadores no PostgreSQL via JT API /query. Nao altera nenhum registro
 no banco nem substitui os indicadores de >3/>10 do painel.
 
-Numerador Sem Mov: pedidos com aging_valor > 2.
+Numerador Sem Mov: pedidos com aging_valor > 3 (4 dias ou mais).
 Numerador Retidos: pedidos com aging_valor > 3.
 Denominador: quantidade coletada (J) + saida para entrega (M).
 
@@ -395,7 +395,7 @@ def carregar_indicadores(session, volume):
         WHERE data >= %s::date AND data <= %s::date
           AND base_codigo = ANY(%s::text[])
           AND (
-             (indicador = 'sem_mov' AND aging_valor > 2)
+             (indicador = 'sem_mov' AND aging_valor > 3)
              OR (indicador = 'retidos' AND aging_valor > 3)
           )
         GROUP BY data, base_codigo, indicador
@@ -509,7 +509,7 @@ def agregar(volume, gestao, numeradores, dias_com_carga, modo):
 CAB = [
     "Data", "Codigo da base", "Nome da base", "S/C",
     "Quantidade coletada (J)", "Saida para entrega (M)", "Volume (J + M)",
-    "Sem Mov >2 dias (pedidos)", "Sem Mov (%)",
+    "Sem Mov >3 dias (4+; pedidos)", "Sem Mov (%)",
     "Retidos >3 dias (pedidos)", "Retidos (%)",
 ]
 
@@ -550,7 +550,7 @@ def salvar_excel(caminho, por_visao):
         ["Coletada", "Coluna J"],
         ["Saida para entrega", "Coluna M"],
         ["Denominador", "Soma J + M por data/base; S/C por Gestao publicada"],
-        ["Sem Mov (%)", "Pedidos em sem_mov com aging_valor > 2 / volume operacional"],
+        ["Sem Mov (%)", "Pedidos em sem_mov com aging_valor > 3 (4+) / volume operacional"],
         ["Retidos (%)", "Pedidos em retidos com aging_valor > 3 / volume operacional"],
         ["Atencao Retidos", "Tempo retido >3 nao comprova vencimento +3 apos prazo. Falta data de vencimento."],
         ["Periodo", "Nao fazer media simples de percentuais; somar numeradores e denominadores."],
@@ -567,7 +567,7 @@ def salvar_excel(caminho, por_visao):
 
 def main():
     ap = argparse.ArgumentParser(
-        description="Calcula porcentagem Sem Mov >2 e Retidos >3 usando A/I/J/M do outlet."
+        description="Calcula porcentagem Sem Mov >3 (4+) e Retidos por aging >3 usando o outlet."
     )
     ap.add_argument("arquivo", help="Arquivo XLSX de volume de negocios do outlet.")
     ap.add_argument("--aba", help="Nome da aba se o arquivo contiver varias tabelas.")
@@ -600,7 +600,7 @@ def main():
         form = lambda x: "SEM CARGA" if x is None else f"{100*x:.2f}%"
         print(
             f"{dt}: coletada={j:,} + saida={m:,} = {vol:,} | "
-            f"Sem Mov >2={sem if sem is not None else 'SEM CARGA'} ({form(sem_pct)}) | "
+            f"Sem Mov >3={sem if sem is not None else 'SEM CARGA'} ({form(sem_pct)}) | "
             f"Retidos >3={ret if ret is not None else 'SEM CARGA'} ({form(ret_pct)})"
         )
     print("Relatorio gerado:", saida)
