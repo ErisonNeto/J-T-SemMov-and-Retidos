@@ -38,6 +38,11 @@ METAS = {
 # nao confirmados; somente a primeira referencia (5% e 3%) e usada aqui.
 METAS_PERCENTUAIS = {
     "sem_mov": _meta("META_PCT_SEM_MOV") if os.getenv("META_PCT_SEM_MOV") else 5.0,
+    # Referencia operacional de Retidos >3 dias (aging, 4 dias ou mais).
+    # Nao representa, por si, dias transcorridos apos o vencimento do SLA.
+    "retidos_aging": (
+        _meta("META_PCT_RETIDOS_AGING") if os.getenv("META_PCT_RETIDOS_AGING") else 3.0
+    ),
     "retidos_sla_vencido": (
         _meta("META_PCT_RETIDOS_SLA") if os.getenv("META_PCT_RETIDOS_SLA") else 3.0
     ),
