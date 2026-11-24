@@ -429,12 +429,21 @@ _FAIXAS_AGING = {
 def _faixa_limites(faixa: str):
     if faixa in _FAIXAS_AGING:
         return _FAIXAS_AGING[faixa]
+    # Corte aberto da ferramenta operacional: acima de N = N+1 dias em diante.
+    # Nao modifica os cortes fixos de 4+ e 11+ dias dos KPIs.
+    if faixa.startswith("acima_"):
+        dias = faixa[len("acima_"):]
+        if dias.isascii() and dias.isdecimal() and 1 <= len(dias) <= 3 and dias[0] != "0":
+            n = int(dias)
+            if 1 <= n <= 365:
+                return (f"Acima de {n} dia" if n == 1 else f"Acima de {n} dias",
+                        n + 1, None)
     if faixa.isdecimal() and str(int(faixa)) == faixa and 1 <= int(faixa) <= 30:
         n = int(faixa)
         return (f"{n} dia" if n == 1 else f"{n} dias", n, n)
     raise HTTPException(
         status_code=400,
-        detail="Faixa de aging invalida. Selecione um dia de 1 a 30 ou uma faixa.",
+        detail="Faixa de aging invalida. Use acima_N (1 a 365), dia exato (1 a 30) ou uma faixa.",
     )
 
 
