@@ -43,8 +43,8 @@ def filtrar(df, indicador, uf='', sc='', base=''):
 
 
 def limite_indicador(indicador):
-    """Sem Mov >2 dias = 3+; Retidos >3 dias = 4+."""
-    return 2 if indicador == 'sem_mov' else 3
+    """Sem Mov e Retidos por aging: estritamente >3 dias (4+)."""
+    return 3
 
 
 def quantidades(df, indicador):
@@ -68,8 +68,8 @@ def percentuais_da_volumetria(raw, volume, inicio, fim, uf='', sc='', base='', e
     e que haja denominador no Outlet para o recorte selecionado.
     """
     sem_v = {
-        'percentual': None, 'pedidos': None, 'limiar_dias': 2,
-        'criterio': 'sem movimentacao >= 3 dias (DC/CD, conforme KPI de referencia)',
+        'percentual': None, 'pedidos': None, 'limiar_dias': 3,
+        'criterio': 'sem movimentacao > 3 dias (4 dias ou mais; DC/CD pendente de validacao)',
         'meta_percentual': METAS_PERCENTUAIS['sem_mov'],
         'dentro_meta': None,
     }
@@ -140,7 +140,7 @@ def percentuais_da_volumetria(raw, volume, inicio, fim, uf='', sc='', base='', e
 
     pendencias = []
     for indicador, chave, limiar in [
-        ('sem_mov', 'sem_mov', 2),
+        ('sem_mov', 'sem_mov', 3),
         ('retidos', 'retidos', 3),
     ]:
         dias_snapshot = set(
@@ -478,7 +478,7 @@ def snapshot(
         'sem_remessas': not bool(lista),
         'aviso': (
             'Retrato de um único dia. Contagem de remessas (COUNT), não pedidos. '
-            + ('Sem Mov: 3 dias ou mais. ' if indicador == 'sem_mov'
+            + ('Sem Mov: mais de 3 dias (4 dias ou mais). ' if indicador == 'sem_mov'
                else 'Retidos: 4 dias ou mais. ')
             + 'Só compare com planilha da mesma data, bases e faixas de dias.'
         ),
