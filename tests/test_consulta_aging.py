@@ -81,7 +81,13 @@ class TestConsultaAging(unittest.TestCase):
         self.assertEqual(_rotulo_faixa_aging("1"), "1 dia")
 
     def test_consulta_orlean_e_pedidos_do_ultimo_dia(self):
-        with patch("app.carregar", return_value=self.df):
+        with patch("app.carregar", return_value=self.df), patch(
+            "app.consultar_contagem_remessas",
+            side_effect=[
+                {"pacotes_unicos": 1, "acumulado": 2, "sem_remessa": 0},
+                {"pacotes_unicos": 1, "acumulado": 4, "sem_remessa": 0},
+            ],
+        ):
             resultado = consulta_aging(
                 indicador="sem_mov", data_inicial="2026-11-13",
                 data_final="2026-11-14", uf="", sc="", base="", aging="1"
