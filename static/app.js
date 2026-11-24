@@ -38,7 +38,7 @@ function criarOpcoesAging(){
  for(let i=1;i<=30;i++){
   const opt=document.createElement('option');
   opt.value=String(i);
-  opt.textContent=i===1?'Exatamente 1 dia':\`Exatamente \${i} dias\`;
+  opt.textContent=i===1?'Exatamente 1 dia':'Exatamente '+i+' dias';
   seletor.insertBefore(opt,opcao);
  }
  seletor.value='4mais';
