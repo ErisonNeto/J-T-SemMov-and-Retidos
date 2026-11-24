@@ -8,7 +8,7 @@ from fastapi.responses import HTMLResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
 from config import METAS, METAS_PERCENTUAIS
-from arquivos import carregar, status_fonte, carregar_volumetria
+from arquivos import carregar, status_fonte, carregar_volumetria, consultar_contagem_remessas
 from exclusoes import sc_excluido
 
 BASE_DIR = Path(__file__).resolve().parent
@@ -498,6 +498,7 @@ def consulta_aging(
         "rotulo": _rotulo_faixa_aging(aging),
         "periodo": {"inicio": inicio, "fim": fim},
         "total_pedidos": int(df["pedidos"].sum()),
+        "pacotes_unicos": 0 if df.empty else None,
         "total_linhas": int(df["linhas"].sum()),
         "ultimo_dia": fim,
         "pedidos_ultimo_dia": int(df.loc[df.data == fim, "pedidos"].sum()),
@@ -517,6 +518,38 @@ def consulta_aging(
     }
     if df.empty:
         return resposta
+
+    # COUNT DISTINCT remessa vem dos detalhes, pois a fonte normal do
+    # dashboard ja foi agrupada por data, base e aging.
+    # Mesmo filtro de Orlean/S-C/UF/base e exclusao de arbitragem encerrada.
+    _, minimo, maximo = _faixa_limites(aging)
+    codigos = sorted({
+        str(x) for x in df["base_codigo"].dropna().unique() if str(x)
+    })
+    try:
+        contagem = consultar_contagem_remessas(
+            indicador, inicio, fim, codigos, minimo, maximo
+        )
+        if contagem["acumulado"] != resposta["total_pedidos"]:
+            resposta["aviso"] += (
+                " Atenção: a consulta de remessas foi atualizada em outro "
+                "momento do resumo; total único indisponível até sincronizar "
+                "as cargas. O acumulado segue a fonte oficial do painel."
+            )
+        elif contagem["sem_remessa"] > 0:
+            resposta["aviso"] += (
+                f" Atenção: {contagem['sem_remessa']} registro(s) sem numero "
+                "de remessa. Não e possível calcular o total único exato."
+            )
+        else:
+            resposta["pacotes_unicos"] = contagem["pacotes_unicos"]
+    except (RuntimeError, ValueError) as exc:
+        # Falha na consulta nao pode inventar quantidade de remessas unicas.
+        resposta["aviso"] += (
+            " Pacotes unicos indisponiveis: falha ao consultar detalhes "
+            "no PostgreSQL. Verifique a JT API."
+        )
+
     por_dia = df.groupby("data", sort=True)[["pedidos", "linhas"]].sum()
     resposta["evolucao"] = [
         {"data": str(dt), "pedidos": int(r.pedidos), "linhas": int(r.linhas)}
