@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>J&amp;T | Sem Movimentação e Retidos</title>
-  <link rel="stylesheet" href="/static/style.css?v=20261124-aging-tool-v1">
+  <link rel="stylesheet" href="/static/style.css?v=20261124-aging-above-v2">
 </head>
 <body>
   <header class="topbar shipping-style-header">
@@ -38,15 +38,19 @@
         <div class="filter wide"><label for="fBase">Base</label><select id="fBase"><option value="">Todas</option></select></div>
         <div class="filter aging-filter">
           <label for="fAging">Aging — consulta operacional</label>
-          <select id="fAging" aria-label="Selecionar faixa exata ou intervalo de aging para consulta operacional">
-            <option value="4mais" selected>4 dias ou mais</option>
-            <option value="11mais">11 dias ou mais</option>
-            <option value="todos">Todos (1 dia em diante)</option>
-            <option value="1a3">1 a 3 dias</option>
-            <option value="4a10">4 a 10 dias</option>
-            <option value="11a15">11 a 15 dias</option>
-            <option value="16a30">16 a 30 dias</option>
-            <option value="31mais">31 dias ou mais</option>
+          <select id="fAging" aria-label="Consultar todos os pacotes acima de X dias, dias exatos ou faixas de aging">
+            <optgroup id="grupoAgingAcima" label="Todos acima de X dias"></optgroup>
+            <optgroup id="grupoAgingExatos" label="Exatamente X dias"></optgroup>
+            <optgroup label="Faixas prontas">
+              <option value="4mais">4 dias ou mais (KPI oficial)</option>
+              <option value="11mais">11 dias ou mais (KPI adicional)</option>
+              <option value="todos">Todos (1 dia em diante)</option>
+              <option value="1a3">1 a 3 dias</option>
+              <option value="4a10">4 a 10 dias</option>
+              <option value="11a15">11 a 15 dias</option>
+              <option value="16a30">16 a 30 dias</option>
+              <option value="31mais">31 dias ou mais</option>
+            </optgroup>
           </select>
         </div>
         <button id="btnClear" class="secondary">Limpar filtros</button>
@@ -59,7 +63,7 @@
         <div>
           <span class="section-kicker">FERRAMENTA OPERACIONAL</span>
           <h3>Consulta de pacotes por dias de aging <span id="consultaAgingFaixa">• 4 dias ou mais</span></h3>
-          <p>Utiliza data, base, S/C e UF selecionados acima. Selecione 1, 2, 3, 4... dias ou uma faixa. Os KPIs oficiais permanecem 4+ e 11+ dias.</p>
+          <p>Utiliza data, base, S/C e UF selecionados acima. Consulte todos os pacotes acima de 1, 2, 3... dias, dias exatos ou faixas prontas. Vale para Sem Mov e Retidos. Os KPIs oficiais continuam em 4+ e 11+ dias.</p>
         </div>
         <button type="button" id="btnExportAging" class="download">Exportar consulta CSV</button>
       </div>
@@ -207,6 +211,6 @@
   </main>
 
   <div id="toast" class="toast"></div>
-  <script src="/static/app.js?v=20261124-aging-tool-v1"></script>
+  <script src="/static/app.js?v=20261124-aging-above-v2"></script>
 </body>
 </html>
