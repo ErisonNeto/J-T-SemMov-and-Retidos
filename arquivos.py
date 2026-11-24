@@ -91,6 +91,30 @@ def _dataframe_da_resposta(payload: Any) -> pd.DataFrame:
     return df[COLUNAS].copy()
 
 
+
+# Mesma exclusao em resumo agregado e contagem de remessas distintas.
+# Status de apelacao/revogacao nunca e excluido.
+_FILTRO_ARBITRAGEM_FINAL_SQL = """
+AND NOT EXISTS (
+    SELECT 1
+    FROM public.jt_arbitragem_ocorrencias AS a
+    WHERE a.remessa = d.remessa
+      AND NULLIF(BTRIM(a.remessa), '') IS NOT NULL
+      AND a.tipo IN ('Avaria', 'Extravio', 'PNR')
+      AND UPPER(BTRIM(COALESCE(a.status, ''))) IN (
+          'PROCESSO ENCERRADO', 'ARBITRAGEM FINALIZADA'
+      )
+      -- Nao altera um snapshot anterior ao encerramento.
+      -- Caso status seja final, mas sem data de fechamento,
+      -- elimina a remessa por seguranca, em qualquer data.
+      AND (
+          NULLIF(LEFT(BTRIM(a.fechada_em::text), 10), '')::date
+              <= d.data::date
+          OR NULLIF(BTRIM(a.fechada_em::text), '') IS NULL
+      )
+)
+"""
+
 def _consultar_resumo() -> pd.DataFrame:
     """Consulta SO as bases de Orlean, e agrega no PostgreSQL.
 
@@ -155,7 +179,7 @@ def _consultar_resumo() -> pd.DataFrame:
 
         # GROUP BY enxuto. Exclui motivos e nomes repetidos por remessa;
         # recupera os atributos oficiais pela Gestao de 146 bases.
-        sql = """
+        sql = f"""
             SELECT d.indicador,
                    d.data::text AS data,
                    COALESCE(d.base_codigo, '') AS base_codigo,
@@ -168,24 +192,7 @@ def _consultar_resumo() -> pd.DataFrame:
               AND d.indicador IN ('sem_mov', 'retidos')
               -- Filtra remessas "fantasmas" ANTES de agregar, afetando todos
               -- os indicadores, filtros de aging, rankings e downloads.
-              AND NOT EXISTS (
-                  SELECT 1
-                  FROM public.jt_arbitragem_ocorrencias AS a
-                  WHERE a.remessa = d.remessa
-                    AND NULLIF(BTRIM(a.remessa), '') IS NOT NULL
-                    AND a.tipo IN ('Avaria', 'Extravio', 'PNR')
-                    AND UPPER(BTRIM(COALESCE(a.status, ''))) IN (
-                        'PROCESSO ENCERRADO', 'ARBITRAGEM FINALIZADA'
-                    )
-                    -- Nao altera um snapshot anterior ao encerramento.
-                    -- Caso status seja final, mas sem data de fechamento,
-                    -- elimina a remessa por seguranca, em qualquer data.
-                    AND (
-                        NULLIF(LEFT(BTRIM(a.fechada_em::text), 10), '')::date
-                            <= d.data::date
-                        OR NULLIF(BTRIM(a.fechada_em::text), '') IS NULL
-                    )
-              )
+              {_FILTRO_ARBITRAGEM_FINAL_SQL}
             GROUP BY 1,2,3,4
             ORDER BY 2,1,3,4
         """
@@ -244,6 +251,76 @@ def _consultar_resumo() -> pd.DataFrame:
         f"cache {_CACHE_SECONDS}s.", flush=True
     )
     return df[COLUNAS].copy()
+
+def consultar_contagem_remessas(
+    indicador: str,
+    inicio: str,
+    fim: str,
+    codigos: list[str],
+    minimo_aging: int,
+    maximo_aging: int | None,
+) -> dict:
+    """Conta remessas sem duplicidade, diretamente na tabela de detalhes.
+
+    Reutiliza os codigos ja filtrados da Gestao oficial de Orlean para
+    reproduzir exatamente o recorte do painel (base, UF e S/C).
+    Nunca transfere remessas individuais ao navegador.
+    """
+    if indicador not in ("sem_mov", "retidos"):
+        raise ValueError("Indicador invalido para contagem de remessas.")
+    if not codigos:
+        return {"pacotes_unicos": 0, "acumulado": 0, "sem_remessa": 0}
+    faixa_final = "AND d.aging_valor <= %s" if maximo_aging is not None else ""
+    parametros = [inicio, fim, sorted(set(codigos)), indicador, minimo_aging]
+    if maximo_aging is not None:
+        parametros.append(maximo_aging)
+    sql = f"""
+        SELECT COUNT(DISTINCT NULLIF(BTRIM(d.remessa), ''))
+                   FILTER (WHERE COALESCE(d.pedidos, 0) > 0)::bigint
+                   AS pacotes_unicos,
+               COALESCE(SUM(d.pedidos), 0)::bigint AS acumulado,
+               COUNT(*) FILTER (
+                   WHERE COALESCE(d.pedidos, 0) > 0
+                     AND NULLIF(BTRIM(d.remessa), '') IS NULL
+               )::bigint AS sem_remessa
+        FROM public.sem_mov_retidos_detalhe AS d
+        WHERE d.data >= %s::date AND d.data <= %s::date
+          AND d.base_codigo = ANY(%s::text[])
+          AND d.indicador = %s
+          AND d.aging_valor >= %s
+          {faixa_final}
+          {_FILTRO_ARBITRAGEM_FINAL_SQL}
+    """
+    with requests.Session() as session:
+        session.headers.update({"Accept-Encoding": "identity"})
+        resp = session.post(
+            f"{_API_URL}/query",
+            headers=_headers(),
+            json={"sql": sql, "params": parametros},
+            timeout=max(_TIMEOUT, 120),
+        )
+    if not resp.ok:
+        raise RuntimeError(
+            f"JT API /query remessas unicas HTTP {resp.status_code}: "
+            f"{resp.text[:250]}"
+        )
+    rows = _extrair_linhas(resp.json())
+    if len(rows) != 1:
+        raise ValueError("Consulta de remessas unicas retornou quantidade invalida de linhas.")
+    row = rows[0]
+    if isinstance(row, dict):
+        campos = [row.get(k) for k in ("pacotes_unicos", "acumulado", "sem_remessa")]
+    elif isinstance(row, (list, tuple)) and len(row) == 3:
+        campos = list(row)
+    else:
+        raise ValueError("Formato da contagem de remessas unicas invalido.")
+    if any(v is None for v in campos):
+        raise ValueError("JT API retornou contagem incompleta de remessas.")
+    return dict(zip(
+        ("pacotes_unicos", "acumulado", "sem_remessa"),
+        (int(v) for v in campos),
+    ))
+
 
 def carregar() -> pd.DataFrame:
     """Carrega um snapshot agregado com cache curto para não repetir a query por endpoint."""
