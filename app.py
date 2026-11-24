@@ -413,6 +413,413 @@ def dashboard(
     }
 
 
+# Consulta exploratoria: nao altera os KPIs oficiais (4+ e 11+).
+# O resumo ja contem contagens agrupadas por data/base/aging, inclusive 1/2/3.
+def _rotulo_faixa_aging(faixa: str) -> str:
+    opcoes = {
+        "todos": "Todos os dias de aging",
+        "1a3": "De 1 a 3 dias",
+        "4mais": "4 dias ou mais",
+        "4a10": "De 4 a 10 dias",
+        "11mais": "11 dias ou mais",
+        "11a15": "De 11 a 15 dias",
+        "16a30": "De 16 a 30 dias",
+        "31mais": "31 dias ou mais",
+    }
+    if faixa in opcoes:
+        return opcoes[faixa]
+    if faixa.isdecimal() and 1 <= int(faixa) <= 30 and str(int(faixa)) == faixa:
+        return f"{faixa} dia" if faixa == "1" else f"{faixa} dias"
+    raise HTTPException(
+        status_code=400,
+        detail="Faixa de aging invalida. Use um dia de 1 a 30 ou uma faixa predefinida.",
+    )
+
+
+def _aplicar_faixa_aging(df, faixa: str):
+    _rotulo_faixa_aging(faixa)  # valida inclusive quando nao houver linhas
+    if df.empty:
+        return df.copy()
+    a = df["aging_valor"].fillna(0)
+    if faixa == "todos":
+        return df[a >= 1].copy()
+    if faixa.isdecimal():
+        return df[a == int(faixa)].copy()
+    if faixa == "1a3":
+        return df[(a >= 1) & (a <= 3)].copy()
+    if faixa == "4mais":
+        return df[a >= 4].copy()
+    if faixa == "4a10":
+        return df[(a >= 4) & (a <= 10)].copy()
+    if faixa == "11mais":
+        return df[a >= 11].copy()
+    if faixa == "11a15":
+        return df[(a >= 11) & (a <= 15)].copy()
+    if faixa == "16a30":
+        return df[(a >= 16) & (a <= 30)].copy()
+    if faixa == "31mais":
+        return df[a >= 31].copy()
+    return df.iloc[0:0].copy()
+
+
+def _consulta_aging_recorte(indicador, data_inicial, data_final, uf, sc, base, faixa):
+    raw = carregar()
+    inicio, fim, _ = resolver_periodo(raw, indicador, data_inicial, data_final)
+    if inicio is None or fim is None:
+        raise HTTPException(status_code=404, detail="Sem dados carregados para consulta.")
+    if (fim - inicio).days > 90:
+        raise HTTPException(
+            status_code=400,
+            detail="Selecione um periodo de ate 91 dias para a consulta operacional.",
+        )
+    df = filtrar(raw, indicador, uf, sc, base)
+    df = df[(df.data >= inicio.isoformat()) & (df.data <= fim.isoformat())]
+    return _aplicar_faixa_aging(df, faixa), inicio.isoformat(), fim.isoformat()
+
+
+@app.get('/api/consulta-aging')
+def consulta_aging(
+    indicador: str = Query(pattern='^(sem_mov|retidos)
+def snapshot(
+    indicador: str = Query(pattern='^(sem_mov|retidos)$'),
+    data: str = '',
+    uf: str = '', sc: str = '', base: str = '',
+):
+    """Retrato do ÚNICO DIA selecionado: remessas por 1/2/3/4/5+ dias.
+
+    Diferente do KPI de pedidos acumulados em uma semana, esta tabela soma
+    COUNT(*) (linhas de remessa) na data exata do snapshot. Não soma uma mesma
+    remessa em vários dias.
+    """
+    raw = carregar()
+    datas = datas_disponiveis(raw, indicador)
+    if not datas:
+        return {
+            'indicador': indicador, 'data': None, 'bases': [],
+            'total': {'d1': 0, 'd2': 0, 'd3': 0, 'd4': 0,
+                      'acima4': 0, 'total': 0, 'acima3': 0, 'pedidos_acima3': 0},
+        }
+    dia = data or datas[-1]
+    try:
+        date.fromisoformat(dia)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail='Data inválida. Use AAAA-MM-DD.') from exc
+    # Exige data disponível na origem, não inventa valor zerado para dia ausente.
+    if dia not in datas:
+        raise HTTPException(
+            status_code=404,
+            detail=f'Não há snapshot de {dia} para {indicador} no banco.',
+        )
+
+    df = filtrar(raw, indicador, uf, sc, base)
+    df = df[df.data == dia]
+    campos = ('d1', 'd2', 'd3', 'd4', 'acima4', 'total', 'acima3', 'pedidos_acima3')
+    bases = {}
+    for r in df.itertuples(index=False):
+        codigo = str(r.base_codigo)
+        item = bases.setdefault(
+            codigo,
+            {
+                'base_codigo': codigo, 'base_nome': str(r.base_nome),
+                'sc': str(r.sc), **{k: 0 for k in campos},
+            },
+        )
+        age = int(r.aging_valor or 0)
+        # linhas = COUNT(*) de remessas no PostgreSQL (não pedidos).
+        linhas = int(r.linhas or 0)
+        pedidos = int(r.pedidos or 0)
+        item['total'] += linhas
+        if 1 <= age <= 4:
+            item[f'd{age}'] += linhas
+        elif age > 4:
+            item['acima4'] += linhas
+        if age > limite_indicador(indicador):
+            item['acima3'] += linhas
+            item['pedidos_acima3'] += pedidos
+
+    lista = sorted(
+        bases.values(),
+        key=lambda item: (-item['total'], item['base_nome'], item['base_codigo']),
+    )
+    total = {c: sum(item[c] for item in lista) for c in campos}
+    return {
+        'indicador': indicador, 'data': dia, 'bases': lista, 'total': total,
+        'sem_remessas': not bool(lista),
+        'aviso': (
+            'Retrato de um único dia. Contagem de remessas (COUNT), não pedidos. '
+            + ('Sem Mov: mais de 3 dias (4 dias ou mais). ' if indicador == 'sem_mov'
+               else 'Retidos: 4 dias ou mais. ')
+            + 'Só compare com planilha da mesma data, bases e faixas de dias.'
+        ),
+    }
+
+
+@app.get('/api/download')
+def download(
+    indicador: str = Query(pattern='^(sem_mov|retidos)$'),
+    data_inicial: str = '',
+    data_final: str = '',
+    corte: str = Query(default='3', pattern='^(3|10)$'),
+    uf: str = '', sc: str = '', base: str = '',
+):
+    raw = carregar()
+    inicio_data, fim_data, _ = resolver_periodo(raw, indicador, data_inicial, data_final)
+    if inicio_data is None or fim_data is None:
+        raise HTTPException(status_code=404, detail='Não há dados carregados para este indicador.')
+
+    inicio_iso = inicio_data.isoformat()
+    fim_iso = fim_data.isoformat()
+    df = filtrar(raw, indicador, uf, sc, base)
+    df = df[(df.data >= inicio_iso) & (df.data <= fim_iso)]
+    limite = limite_indicador(indicador) if corte == '3' else 10
+    df = df[df.aging_valor > limite]
+
+    def stream():
+        def safe(v):
+            return "'" + v if isinstance(v, str) and v.lstrip().startswith(('=', '+', '-', '@')) else v
+
+        yield '\ufeff'
+        buf = io.StringIO()
+        writer = csv.writer(buf, delimiter=';')
+        writer.writerow(df.columns)
+        yield buf.getvalue()
+        buf.seek(0); buf.truncate(0)
+        for row in df.itertuples(index=False, name=None):
+            writer.writerow([safe(v) for v in row])
+            yield buf.getvalue()
+            buf.seek(0); buf.truncate(0)
+
+    return StreamingResponse(
+        stream(),
+        media_type='text/csv',
+        headers={'Content-Disposition': f'attachment; filename="resumo_{indicador}_{inicio_iso}_a_{fim_iso}_acima_{corte}.csv"'},
+    )
+),
+    data_inicial: str = '', data_final: str = '',
+    uf: str = '', sc: str = '', base: str = '',
+    aging: str = '4mais',
+):
+    """Ferramenta de consulta sem mudar as metas e cortes do dashboard."""
+    df, inicio, fim = _consulta_aging_recorte(
+        indicador, data_inicial, data_final, uf, sc, base, aging
+    )
+    resumo = {
+        'indicador': indicador,
+        'faixa': aging,
+        'rotulo': _rotulo_faixa_aging(aging),
+        'periodo': {'inicio': inicio, 'fim': fim},
+        'total_pedidos': int(df['pedidos'].sum()),
+        'total_linhas': int(df['linhas'].sum()),
+        'ultimo_dia': fim,
+        'pedidos_ultimo_dia': int(df.loc[df.data == fim, 'pedidos'].sum()),
+        'evolucao': [], 'bases': [], 'scs': [], 'aging_dias': [],
+        'aviso': (
+            'Consulta exploratoria: soma das ocorrencias por dia. '
+            'Uma remessa pode constar em mais de um dia. '
+            'Linhas nao significam necessariamente remessas distintas. '
+            'Os KPIs oficiais 4+ e 11+ permanecem inalterados.'
+        ),
+    }
+    if df.empty:
+        return resumo
+
+    evolucao = df.groupby('data', sort=True)[['pedidos', 'linhas']].sum()
+    resumo['evolucao'] = [
+        {'data': str(d), 'pedidos': int(r.pedidos), 'linhas': int(r.linhas)}
+        for d, r in evolucao.iterrows()
+    ]
+    base_grupo = (
+        df.groupby(['base_codigo', 'base_nome', 'sc'], dropna=False)[
+            ['pedidos', 'linhas']
+        ].sum()
+        .reset_index()
+        .sort_values(['pedidos', 'base_nome'], ascending=[False, True])
+        .head(25)
+    )
+    resumo['bases'] = [
+        {
+            'base_codigo': str(r.base_codigo),
+            'base_nome': str(r.base_nome),
+            'sc': str(r.sc),
+            'pedidos': int(r.pedidos),
+            'linhas': int(r.linhas),
+        }
+        for r in base_grupo.itertuples(index=False)
+    ]
+    sc_grupo = (
+        df.groupby('sc', dropna=False)[['pedidos', 'linhas']]
+        .sum().sort_values('pedidos', ascending=False).head(25)
+    )
+    resumo['scs'] = [
+        {'sc': str(nome), 'pedidos': int(r.pedidos), 'linhas': int(r.linhas)}
+        for nome, r in sc_grupo.iterrows()
+    ]
+    idades = df.groupby('aging_valor', sort=True)[['pedidos', 'linhas']].sum()
+    resumo['aging_dias'] = [
+        {'dias': int(d), 'pedidos': int(r.pedidos), 'linhas': int(r.linhas)}
+        for d, r in idades.iterrows()
+    ]
+    return resumo
+
+
+@app.get('/api/consulta-aging.csv')
+def consulta_aging_csv(
+    indicador: str = Query(pattern='^(sem_mov|retidos)
+def snapshot(
+    indicador: str = Query(pattern='^(sem_mov|retidos)$'),
+    data: str = '',
+    uf: str = '', sc: str = '', base: str = '',
+):
+    """Retrato do ÚNICO DIA selecionado: remessas por 1/2/3/4/5+ dias.
+
+    Diferente do KPI de pedidos acumulados em uma semana, esta tabela soma
+    COUNT(*) (linhas de remessa) na data exata do snapshot. Não soma uma mesma
+    remessa em vários dias.
+    """
+    raw = carregar()
+    datas = datas_disponiveis(raw, indicador)
+    if not datas:
+        return {
+            'indicador': indicador, 'data': None, 'bases': [],
+            'total': {'d1': 0, 'd2': 0, 'd3': 0, 'd4': 0,
+                      'acima4': 0, 'total': 0, 'acima3': 0, 'pedidos_acima3': 0},
+        }
+    dia = data or datas[-1]
+    try:
+        date.fromisoformat(dia)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail='Data inválida. Use AAAA-MM-DD.') from exc
+    # Exige data disponível na origem, não inventa valor zerado para dia ausente.
+    if dia not in datas:
+        raise HTTPException(
+            status_code=404,
+            detail=f'Não há snapshot de {dia} para {indicador} no banco.',
+        )
+
+    df = filtrar(raw, indicador, uf, sc, base)
+    df = df[df.data == dia]
+    campos = ('d1', 'd2', 'd3', 'd4', 'acima4', 'total', 'acima3', 'pedidos_acima3')
+    bases = {}
+    for r in df.itertuples(index=False):
+        codigo = str(r.base_codigo)
+        item = bases.setdefault(
+            codigo,
+            {
+                'base_codigo': codigo, 'base_nome': str(r.base_nome),
+                'sc': str(r.sc), **{k: 0 for k in campos},
+            },
+        )
+        age = int(r.aging_valor or 0)
+        # linhas = COUNT(*) de remessas no PostgreSQL (não pedidos).
+        linhas = int(r.linhas or 0)
+        pedidos = int(r.pedidos or 0)
+        item['total'] += linhas
+        if 1 <= age <= 4:
+            item[f'd{age}'] += linhas
+        elif age > 4:
+            item['acima4'] += linhas
+        if age > limite_indicador(indicador):
+            item['acima3'] += linhas
+            item['pedidos_acima3'] += pedidos
+
+    lista = sorted(
+        bases.values(),
+        key=lambda item: (-item['total'], item['base_nome'], item['base_codigo']),
+    )
+    total = {c: sum(item[c] for item in lista) for c in campos}
+    return {
+        'indicador': indicador, 'data': dia, 'bases': lista, 'total': total,
+        'sem_remessas': not bool(lista),
+        'aviso': (
+            'Retrato de um único dia. Contagem de remessas (COUNT), não pedidos. '
+            + ('Sem Mov: mais de 3 dias (4 dias ou mais). ' if indicador == 'sem_mov'
+               else 'Retidos: 4 dias ou mais. ')
+            + 'Só compare com planilha da mesma data, bases e faixas de dias.'
+        ),
+    }
+
+
+@app.get('/api/download')
+def download(
+    indicador: str = Query(pattern='^(sem_mov|retidos)$'),
+    data_inicial: str = '',
+    data_final: str = '',
+    corte: str = Query(default='3', pattern='^(3|10)$'),
+    uf: str = '', sc: str = '', base: str = '',
+):
+    raw = carregar()
+    inicio_data, fim_data, _ = resolver_periodo(raw, indicador, data_inicial, data_final)
+    if inicio_data is None or fim_data is None:
+        raise HTTPException(status_code=404, detail='Não há dados carregados para este indicador.')
+
+    inicio_iso = inicio_data.isoformat()
+    fim_iso = fim_data.isoformat()
+    df = filtrar(raw, indicador, uf, sc, base)
+    df = df[(df.data >= inicio_iso) & (df.data <= fim_iso)]
+    limite = limite_indicador(indicador) if corte == '3' else 10
+    df = df[df.aging_valor > limite]
+
+    def stream():
+        def safe(v):
+            return "'" + v if isinstance(v, str) and v.lstrip().startswith(('=', '+', '-', '@')) else v
+
+        yield '\ufeff'
+        buf = io.StringIO()
+        writer = csv.writer(buf, delimiter=';')
+        writer.writerow(df.columns)
+        yield buf.getvalue()
+        buf.seek(0); buf.truncate(0)
+        for row in df.itertuples(index=False, name=None):
+            writer.writerow([safe(v) for v in row])
+            yield buf.getvalue()
+            buf.seek(0); buf.truncate(0)
+
+    return StreamingResponse(
+        stream(),
+        media_type='text/csv',
+        headers={'Content-Disposition': f'attachment; filename="resumo_{indicador}_{inicio_iso}_a_{fim_iso}_acima_{corte}.csv"'},
+    )
+),
+    data_inicial: str = '', data_final: str = '',
+    uf: str = '', sc: str = '', base: str = '',
+    aging: str = '4mais',
+):
+    """Exporta quantitativos por dia/base/S-C/aging; nao publica remessas privadas."""
+    df, inicio, fim = _consulta_aging_recorte(
+        indicador, data_inicial, data_final, uf, sc, base, aging
+    )
+    cols = ['data', 'base_codigo', 'base_nome', 'sc', 'aging_valor', 'pedidos', 'linhas']
+    recorte = df[cols].sort_values(['data', 'base_nome', 'aging_valor'])
+
+    def safe(value):
+        txt = str(value) if value is not None else ''
+        if txt.lstrip().startswith(('=', '+', '-', '@')):
+            return "'" + txt
+        return txt
+
+    def stream():
+        yield '\ufeff'
+        buf = io.StringIO()
+        writer = csv.writer(buf, delimiter=';')
+        writer.writerow(['Data', 'Codigo da base', 'Base', 'S/C', 'Aging (dias)',
+                         'Pedidos (soma)', 'Linhas da fonte'])
+        yield buf.getvalue()
+        buf.seek(0); buf.truncate(0)
+        for row in recorte.itertuples(index=False, name=None):
+            writer.writerow([safe(v) for v in row])
+            yield buf.getvalue()
+            buf.seek(0); buf.truncate(0)
+
+    return StreamingResponse(
+        stream(),
+        media_type='text/csv',
+        headers={'Content-Disposition': (
+            'attachment; filename="consulta_aging_'
+            f'{indicador}_{aging}_{inicio}_a_{fim}.csv"'
+        )},
+    )
+
+
 @app.get('/api/snapshot')
 def snapshot(
     indicador: str = Query(pattern='^(sem_mov|retidos)$'),
