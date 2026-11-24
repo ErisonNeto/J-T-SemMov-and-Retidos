@@ -1,4 +1,4 @@
-const state={indicador:'sem_mov',request:0,agingRequest:0};
+const state={indicador:'sem_mov',request:0,agingRequest:0,agingRows:[],agingUniqueByDay:{}};
 const $=s=>document.querySelector(s); const $$=s=>[...document.querySelectorAll(s)];
 const fmt=n=>n===null||n===undefined?'—':Number(n).toLocaleString('pt-BR');
 const fmtDate=s=>s?new Date(s+'T12:00:00').toLocaleDateString('pt-BR'):'—';
@@ -56,6 +56,14 @@ function parametrosAging(){
  p.set('aging',$('#fAging').value||'acima_3');
  return p;
 }
+function renderAgingDias(){
+ const dias=state.agingRows||[],unicos=state.agingUniqueByDay||{};
+ $('#consultaAgingDias').innerHTML=dias.length?dias.map(x=>{
+  const unico=Object.prototype.hasOwnProperty.call(unicos,x.data)?unicos[x.data]:null;
+  return '<tr><td>'+fmtDate(x.data)+'</td><td class="num">'+fmt(x.pedidos)+
+   '</td><td class="num">'+fmt(unico)+'</td></tr>';
+ }).join(''):'<tr><td colspan="3" class="empty">Nenhum registro no período.</td></tr>';
+}
 function renderAgingConsulta(d){
  $('#consultaAgingFaixa').textContent='• '+(d.rotulo||'Aging');
  $('#consultaAgingPedidos').textContent=fmt(d.total_pedidos);
@@ -67,13 +75,13 @@ function renderAgingConsulta(d){
   '<tr><td><strong>'+esc(x.base_nome||x.base_codigo)+'</strong><div class="base-secondary">'+esc(x.base_codigo)+'</div></td>'+
   '<td>'+esc(x.sc||'—')+'</td><td class="num">'+fmt(x.pedidos)+'</td><td class="num">'+fmt(x.linhas)+'</td></tr>'
  ).join(''):'<tr><td colspan="4" class="empty">Nenhum pacote nesta faixa e recorte.</td></tr>';
- const dias=d.evolucao||[];
- $('#consultaAgingDias').innerHTML=dias.length?dias.map(x=>
-  '<tr><td>'+fmtDate(x.data)+'</td><td class="num">'+fmt(x.pedidos)+'</td><td class="num">'+fmt(x.linhas)+'</td></tr>'
- ).join(''):'<tr><td colspan="3" class="empty">Nenhum registro no período.</td></tr>';
+ state.agingRows=d.evolucao||[];
+ renderAgingDias();
 }
 async function loadAgingConsulta(){
  const req=++state.agingRequest, indicador=state.indicador;
+ state.agingRows=[];
+ state.agingUniqueByDay={};
  $('#consultaAgingStatus').textContent='Consultando os pacotes da faixa selecionada...';
  $('#consultaUnicosAviso').textContent='';
  ['#consultaAgingUnicos','#consultaAgingPedidos','#consultaAgingUltimo','#consultaAgingLinhas'].forEach(x=>$(x).textContent='—');
@@ -87,6 +95,10 @@ async function loadAgingConsulta(){
    if(req!==state.agingRequest||indicador!==state.indicador)return;
    $('#consultaAgingUnicos').textContent=fmt(unicos.pacotes_unicos);
    $('#consultaUnicosAviso').textContent=unicos.aviso||'';
+   (unicos.evolucao||[]).forEach(item=>{
+    state.agingUniqueByDay[item.data]=item.pacotes_unicos;
+   });
+   renderAgingDias();
   }).catch(()=>{
    if(req!==state.agingRequest||indicador!==state.indicador)return;
    $('#consultaAgingUnicos').textContent='—';
@@ -140,6 +152,25 @@ function renderVolumetria(d){
  $('#volAviso').textContent=v.aviso||'';
  $('#volAviso').classList.toggle('hidden',!v.aviso);
 }
+async function loadComparacaoUnicos(request){
+ const params=q();
+ try {
+  const resultado=await json('/api/comparacao-pacotes-unicos?'+params);
+  if(request!==state.request)return;
+  for(const [periodo,prefixo] of [['anterior','prev'],['atual','cur']]){
+   const valores=resultado[periodo]||{};
+   for(const corte of ['3','10']){
+    $('#'+prefixo+'Unique'+corte).textContent=fmt(valores['acima_'+corte]);
+   }
+  }
+  $('#comparisonUniqueAviso').textContent=resultado.aviso
+   ?'Pacotes únicos: '+resultado.aviso
+   :'Pacotes únicos: cada remessa é contada uma vez por semana, após excluir arbitragens encerradas.';
+ }catch(e){
+  if(request!==state.request)return;
+  $('#comparisonUniqueAviso').textContent='Pacotes únicos indisponíveis: confira o PostgreSQL e a JT API.';
+ }
+}
 function renderKpis(d){
  const p=d.periodo||{};
  const atualLabel=p.semana_atual||'Período atual',anteriorLabel=p.semana_anterior||'Período anterior';
@@ -192,7 +223,10 @@ function limparResultadosAoFiltrar(){
  $('#agingBars').innerHTML='<div class="empty">Atualizando Aging...</div>';
  ['3','10'].forEach(c=>{
   for(const k of ['prev','cur','var'])$('#'+k+c).textContent='—';
+  $('#prevUnique'+c).textContent='—';
+  $('#curUnique'+c).textContent='—';
  });
+ $('#comparisonUniqueAviso').textContent='Pacotes únicos: cada remessa é contada uma vez por semana.';
 }
 function renderSnapshot(d){
  $('#snapshotDate').textContent=d.data?'• '+fmtDate(d.data):'• sem dados';
@@ -213,7 +247,7 @@ function renderSnapshot(d){
   campos.map(k=>'<th class="num">'+fmt(total[k]||0)+'</th>').join('')+'</tr>';
  $('#snapshotNote').textContent=d.aviso||'Comparar somente snapshots da mesma data.';
 }
-async function loadDashboard(){const request=++state.request;++state.agingRequest;document.body.setAttribute('aria-busy','true');$('#consultaUnicosAviso').textContent='';['#consultaAgingUnicos','#consultaAgingPedidos','#consultaAgingUltimo','#consultaAgingLinhas'].forEach(s=>$(s).textContent='—');limparResultadosAoFiltrar();$('#snapshotBody').innerHTML='<tr><td colspan="9" class="empty">Conferindo remessas do dia final...</td></tr>';$('#snapshotFoot').replaceChildren();$('#loadError').classList.add('hidden');try{if($('#fDataInicial').value>$('#fDataFinal').value){toast('Data inicial não pode ser maior que a final');return}const d=await json('/api/dashboard?'+q());if(request!==state.request)return;const fs=d.fonte||{};$('#sourceStatus').textContent=fs.fonte?fs.fonte+(fs.sincronizado_em?' • Sincronizado: '+new Date(fs.sincronizado_em).toLocaleString('pt-BR'):'')+(fs.consulta_segundos!==undefined?' • Consulta ao banco: '+fmt(fs.consulta_segundos)+' s':''):'';$('#sourceWarning').textContent=fs.aviso||'';$('#sourceWarning').classList.toggle('hidden',!fs.aviso);renderKpis(d);renderVolumetria(d);lineChart($('#evolutionChart'),d.evolucao);bars($('#agingBars'),d.aging);renderTables(d);loadAgingConsulta();
+async function loadDashboard(){const request=++state.request;++state.agingRequest;state.agingRows=[];state.agingUniqueByDay={};document.body.setAttribute('aria-busy','true');$('#consultaUnicosAviso').textContent='';['#consultaAgingUnicos','#consultaAgingPedidos','#consultaAgingUltimo','#consultaAgingLinhas'].forEach(s=>$(s).textContent='—');limparResultadosAoFiltrar();$('#snapshotBody').innerHTML='<tr><td colspan="9" class="empty">Conferindo remessas do dia final...</td></tr>';$('#snapshotFoot').replaceChildren();$('#loadError').classList.add('hidden');try{if($('#fDataInicial').value>$('#fDataFinal').value){toast('Data inicial não pode ser maior que a final');return}const d=await json('/api/dashboard?'+q());if(request!==state.request)return;const fs=d.fonte||{};$('#sourceStatus').textContent=fs.fonte?fs.fonte+(fs.sincronizado_em?' • Sincronizado: '+new Date(fs.sincronizado_em).toLocaleString('pt-BR'):'')+(fs.consulta_segundos!==undefined?' • Consulta ao banco: '+fmt(fs.consulta_segundos)+' s':''):'';$('#sourceWarning').textContent=fs.aviso||'';$('#sourceWarning').classList.toggle('hidden',!fs.aviso);renderKpis(d);loadComparacaoUnicos(request);renderVolumetria(d);lineChart($('#evolutionChart'),d.evolucao);bars($('#agingBars'),d.aging);renderTables(d);loadAgingConsulta();
 const sp=new URLSearchParams({indicador:state.indicador,data:$('#fDataFinal').value,uf:$('#fUf').value,sc:$('#fSc').value,base:$('#fBase').value});
 json('/api/snapshot?'+sp).then(snapshot=>{if(request===state.request)renderSnapshot(snapshot)}).catch(err=>{
  if(request===state.request){
