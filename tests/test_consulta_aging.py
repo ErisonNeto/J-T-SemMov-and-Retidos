@@ -44,13 +44,40 @@ class TestConsultaAging(unittest.TestCase):
         self.assertEqual(int(_aplicar_faixa_aging(self.df, "4mais").pedidos.sum()), 15)
         self.assertEqual(int(_aplicar_faixa_aging(self.df, "11mais").pedidos.sum()), 11)
 
+    def test_acima_de_dias_nao_inclui_o_dia_limiar(self):
+        # Acima de 1 = 2+, acima de 2 = 3+, acima de 3 = 4+.
+        self.assertEqual(int(_aplicar_faixa_aging(self.df, "acima_1").pedidos.sum()), 18)
+        self.assertEqual(int(_aplicar_faixa_aging(self.df, "acima_2").pedidos.sum()), 18)
+        self.assertEqual(int(_aplicar_faixa_aging(self.df, "acima_3").pedidos.sum()), 15)
+        self.assertEqual(int(_aplicar_faixa_aging(self.df, "acima_10").pedidos.sum()), 11)
+        self.assertEqual(int(_aplicar_faixa_aging(self.df, "acima_11").pedidos.sum()), 0)
+        self.assertEqual(_rotulo_faixa_aging("acima_1"), "Acima de 1 dia")
+        self.assertEqual(_rotulo_faixa_aging("acima_2"), "Acima de 2 dias")
+
+    def test_acima_de_dias_funciona_nos_dois_indicadores(self):
+        for indicador in ("sem_mov", "retidos"):
+            with self.subTest(indicador=indicador):
+                dados = self.df.copy()
+                dados["indicador"] = indicador
+                with patch("app.carregar", return_value=dados):
+                    for corte, total in (("acima_1", 18), ("acima_3", 15),
+                                         ("acima_10", 11)):
+                        resposta = consulta_aging(
+                            indicador=indicador, data_inicial="2026-11-13",
+                            data_final="2026-11-14", uf="", sc="", base="",
+                            aging=corte,
+                        )
+                        self.assertEqual(resposta["total_pedidos"], total)
+                        self.assertEqual(resposta["pedidos_ultimo_dia"],
+                                         15 if corte != "acima_10" else 11)
+
     def test_valida_faixa(self):
         with self.assertRaises(HTTPException):
             _rotulo_faixa_aging("0")
         with self.assertRaises(HTTPException):
             _rotulo_faixa_aging("999")
         with self.assertRaises(HTTPException):
-            _rotulo_faixa_aging("1; DROP TABLE")
+            _rotulo_faixa_aging("1; DROP TABLE")\n        with self.assertRaises(HTTPException):\n            _rotulo_faixa_aging("acima_0")\n        with self.assertRaises(HTTPException):\n            _rotulo_faixa_aging("acima_366")\n        with self.assertRaises(HTTPException):\n            _rotulo_faixa_aging("acima_03")
         self.assertEqual(_rotulo_faixa_aging("1"), "1 dia")
 
     def test_consulta_orlean_e_pedidos_do_ultimo_dia(self):
