@@ -124,7 +124,7 @@ def percentuais_da_volumetria(raw, volume, inicio, fim, uf='', sc='', base='', e
         'total': denominador,
     })
     if denominador <= 0:
-        saida['aviso'] = 'A volumetria J + M e zero neste recorte.'
+        saida['aviso'] = 'A volumetria e zero neste recorte.'
         return saida
 
     dias_esperados = set(

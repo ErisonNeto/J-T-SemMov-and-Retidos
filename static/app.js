@@ -139,8 +139,8 @@ function renderVolumetria(d){
  };
  $('#volTotal').textContent=fmt(v.total);
  $('#volSplit').textContent=v.total===null||v.total===undefined
-  ?'Sem volumetria J + M cadastrada'
-  :'Coletada (J): '+fmt(v.coletada)+' • Saída (M): '+fmt(v.saida_entrega);
+  ?'Sem volumetria cadastrada'
+  :'Coletada: '+fmt(v.coletada)+' • Saída: '+fmt(v.saida_entrega);
  $('#pctSemMov').textContent=pct(sem.percentual);
  $('#pctSemMovInfo').textContent=sem.pedidos===null||sem.pedidos===undefined
   ?'Sem dados suficientes para calcular'
