@@ -133,7 +133,7 @@ function renderVolumetria(d){
   const v=item.percentual;
   if(v==null)texto+=' • sem avaliação';
   else if(v<=alvo){texto+=' • meta atingida';el.classList.add('good')}
-  else if(v<=item.minimo_percentual){texto+=' • mínimo atingido';el.classList.add('warning')}
+  else if(v<=item.minimo_percentual){texto+=' • mínimo atingido'}
   else {texto+=' • fora do mínimo';el.classList.add('bad')}
   el.textContent=texto;
  };
